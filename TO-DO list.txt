@@ -1,0 +1,17 @@
+1. config db URL
+2. create mongoDB table
+3. logical algorithm (verify questions)
+4. config model
+5. logging 
+6. 
+
+
+**Validation logic instruction**
+Now, there is difference validation logic for each challenge type. Write a validation logic for the challenge type with the challenge_type_id of ct-002. 
+
+For this challenge type, validate the inferenced output classes, if there is a class exist more than 1 times in the inferenced output then the particular object need to be click.  If the class only exist 1 times then that particular object is not selected to be clicked. 
+
+
+**Sample image**
+Inference class used for question validation logic. 
+

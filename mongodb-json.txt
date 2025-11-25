@@ -1,0 +1,15 @@
+# Insert new model 
+
+# Insert new postprocess profile 
+
+# Insert new preprocess profile
+"preprocess-id": "pp-001",
+  "name": "icon_edge_enhancement",
+  "steps": [
+    {"operation": "bilateral", "params": {"d": 9, "sigmaColor": 75, "sigmaSpace": 75}},
+    {"operation": "median", "params": {"ksize": 7}},
+    {"operation": "gaussian", "params": {"ksize": [3, 3], "sigmaX": 0}},
+    {"operation": "nlmeans", "params": {"h": 10, "templateWindowSize": 7, "searchWindowSize": 21}},
+    {"operation": "laplacian", "params": {"ddepth": 64}},
+    {"operation": "addweighted", "params": {"alpha": 0.7, "beta": 0.3, "gamma": 0}}
+  ]
