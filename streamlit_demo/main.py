@@ -206,7 +206,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                             # Draw text
                                             draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                 
-                                st.image(img, caption="Processed Image with Detections", use_container_width=True)
+                                st.image(img, caption="Processed Image with Detections", width='stretch')
                             except Exception as e:
                                 st.error(f"Failed to display image: {e}")
                         else:
@@ -247,7 +247,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                 "Bounding Box": bbox_str,
                                 "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
                             })
-                        st.dataframe(table_data, use_container_width=True)
+                        st.dataframe(table_data, width='stretch')
                     else:
                         st.info("No detections found")
                     
@@ -354,14 +354,14 @@ elif main_section == "7. hCAPTCHA Demo":
                                                             draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                             draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                             
-                                            st.image(img, caption=f"{filename} (Challenge {challenge_idx})", use_container_width=True)
+                                            st.image(img, caption=f"{filename} (Challenge {challenge_idx})", width='stretch')
                                         except Exception as e:
                                             st.error(f"Failed to display image: {e}")
                                     elif data_url:
                                         try:
                                             b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
                                             img_bytes = base64.b64decode(b64_part)
-                                            st.image(img_bytes, caption=f"{filename}", use_container_width=True)
+                                            st.image(img_bytes, caption=f"{filename}", width='stretch')
                                         except Exception:
                                             st.write(f"{filename}")
                                 
@@ -409,7 +409,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                                 "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
                                             })
                                     if table_data:
-                                        st.dataframe(table_data, use_container_width=True)
+                                        st.dataframe(table_data, width='stretch')
                                 
                                 if item_idx < len(challenge_items) - 1:
                                     st.markdown("---")
@@ -541,7 +541,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                                         draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                         draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                         
-                                        st.image(img, caption=f"{filename} (with detections)", use_container_width=True)
+                                        st.image(img, caption=f"{filename} (with detections)", width='stretch')
                                     except Exception as e:
                                         st.error(f"Failed to display image: {e}")
                                 else:
@@ -549,7 +549,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                         try:
                                             b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
                                             img_bytes = base64.b64decode(b64_part)
-                                            st.image(img_bytes, caption=f"{filename}", use_container_width=True)
+                                            st.image(img_bytes, caption=f"{filename}", width='stretch')
                                         except Exception:
                                             st.write(f"{filename}")
                             
@@ -605,7 +605,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                                 "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
                                             })
                                         if table_data:
-                                            st.dataframe(table_data, use_container_width=True)
+                                            st.dataframe(table_data, width='stretch')
                                     else:
                                         st.info(f"No valid detections for {filename}")
                                 elif isinstance(img_results, dict) and 'error' in img_results:
@@ -665,7 +665,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                                         draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                         draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                         
-                                        st.image(img, caption="Processed Image with Detections", use_container_width=True)
+                                        st.image(img, caption="Processed Image with Detections", width='stretch')
                                     except Exception as e:
                                         st.error(f"Failed to display image: {e}")
                                 else:
@@ -673,7 +673,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                         try:
                                             b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
                                             img_bytes = base64.b64decode(b64_part)
-                                            st.image(img_bytes, caption=f"{filename}", use_container_width=True)
+                                            st.image(img_bytes, caption=f"{filename}", width='stretch')
                                         except Exception:
                                             st.write(f"{filename}")
                             
@@ -728,7 +728,7 @@ elif main_section == "7. hCAPTCHA Demo":
                                             "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
                                         })
                                 if table_data:
-                                    st.dataframe(table_data, use_container_width=True)
+                                    st.dataframe(table_data, width='stretch')
                             else:
                                 st.info("No detections found")
                             
