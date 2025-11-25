@@ -13,6 +13,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
+from app.config import API_TIMEOUT
 
 os.environ['WDM_LOG_LEVEL'] = '0'  # Silence webdriver_manager logs
 
@@ -51,7 +52,7 @@ def send_challenge_bytes(image_bytes, filename, question):
             "http://localhost:5000/solve_hcaptcha", 
             files=files, 
             data=data, 
-            timeout=60
+            timeout=API_TIMEOUT
         )
         return resp.json()
     except requests.exceptions.ConnectionError as e:
@@ -67,7 +68,7 @@ def send_challenge_bytes(image_bytes, filename, question):
 def fetch_image_bytes(url):
     """Download image from URL."""
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=API_TIMEOUT)
         if response.status_code == 200:
             return response.content
         print(f"Failed to download: {url}")
@@ -235,7 +236,7 @@ def send_nested_div_images(driver, question):
                 "http://localhost:5000/solve_hcaptcha_batch",
                 files=files,
                 data=data,
-                timeout=(10, 240),
+                timeout=API_TIMEOUT,
             )
             result = resp.json()
         except requests.exceptions.ConnectionError as e:
@@ -378,7 +379,7 @@ def check_question_matches_challenge_type(question):
                 "http://localhost:5000/solve_hcaptcha",
                 files={"image": ("test.png", BytesIO(b""), "image/png")},
                 data={"question": question},
-                timeout=10
+                timeout=API_TIMEOUT
             )
             if resp.ok:
                 result = resp.json()

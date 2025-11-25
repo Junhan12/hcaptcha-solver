@@ -15,7 +15,7 @@ FLASK_PORT = int(os.getenv("FLASK_PORT", 5000))
 FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 
 # API Configuration
-API_TIMEOUT = int(os.getenv("API_TIMEOUT", 60))
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", 300))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
 
 # Model Configuration
@@ -33,7 +33,7 @@ DEFAULT_MODEL_CONFIG = {
 PREPROCESS_TIMEOUT = int(os.getenv("PREPROCESS_TIMEOUT", 30))
 
 # Database Configuration
-DB_CONNECTION_TIMEOUT = int(os.getenv("DB_CONNECTION_TIMEOUT", 5000))
+DB_CONNECTION_TIMEOUT = int(os.getenv("DB_CONNECTION_TIMEOUT", 10000))
 DB_MAX_POOL_SIZE = int(os.getenv("DB_MAX_POOL_SIZE", 50))
 DB_MIN_POOL_SIZE = int(os.getenv("DB_MIN_POOL_SIZE", 10))
 

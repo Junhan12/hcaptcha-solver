@@ -14,6 +14,7 @@ try:
     from .preprocess import apply_preprocess
 except Exception:
     # Fallback when executed in contexts that expect absolute imports with project root on sys.path
+    from app.config import FLASK_HOST, FLASK_PORT
     from app.solver import solve_captcha
     from app.database import get_model_config
     from app.database import create_challenge, get_model_for_challenge
@@ -570,4 +571,4 @@ def get_models():
     return jsonify({'items': items})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host=FLASK_HOST, port=FLASK_PORT)

@@ -2,7 +2,7 @@ from pymongo import errors
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
 import os
-from .config import MONGO_URI, DEFAULT_MODEL_CONFIG
+from .config import MONGO_URI, DEFAULT_MODEL_CONFIG, DB_CONNECTION_TIMEOUT
 from bson import ObjectId
 from datetime import datetime
 try:
@@ -18,7 +18,7 @@ if _uri:
         client = MongoClient(
             _uri,
             server_api=ServerApi('1'),
-            serverSelectionTimeoutMS=2000,
+            serverSelectionTimeoutMS=DB_CONNECTION_TIMEOUT, 
         )
         # Trigger server selection immediately
         client.admin.command("ping")
