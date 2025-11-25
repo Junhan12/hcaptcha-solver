@@ -297,7 +297,7 @@ def perform_clicks(
     *,
     canvas_element: Optional[WebElement] = None,
     tile_elements: Optional[List[WebElement]] = None,
-    confidence_threshold: float = 0.0,  # FIXED: Changed default from 0.5 to 0.0
+    confidence_threshold: float = 0.0, 
     pause_seconds: float = 1.0,
 ) -> int:
     """

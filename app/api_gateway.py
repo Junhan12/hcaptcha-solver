@@ -1,7 +1,18 @@
+import threading
+import tempfile
+import os
+import shutil
 from flask import Flask, request, jsonify
 import base64
 import zlib
 from bson.binary import Binary
+
+# Ensure FLASK_HOST/FLASK_PORT are available regardless of how this module is executed
+try:
+    from .config import FLASK_HOST, FLASK_PORT
+except ImportError:
+    from app.config import FLASK_HOST, FLASK_PORT
+
 try:
     # Prefer package-relative imports when run as a module: `python -m app.api_gateway`
     from .solver import solve_captcha
@@ -14,7 +25,6 @@ try:
     from .preprocess import apply_preprocess
 except Exception:
     # Fallback when executed in contexts that expect absolute imports with project root on sys.path
-    from app.config import FLASK_HOST, FLASK_PORT
     from app.solver import solve_captcha
     from app.database import get_model_config
     from app.database import create_challenge, get_model_for_challenge
@@ -341,7 +351,9 @@ def solve_hcaptcha_batch():
         
         # Apply preprocessing if profile exists
         processed_img_bytes = img_bytes
+        print("start preprocessing image")
         if preprocess_profile:
+            print("start applying preprocessing")
             try:
                 processed_img_bytes, _ = apply_preprocess(img_bytes, preprocess_profile)
                 print(f"Preprocessed image {idx} successfully")
@@ -545,19 +557,51 @@ def create_or_update_model():
         return jsonify({'error': 'model_id and model_name are required'}), 400
 
     weights_file = request.files.get('weights')
-    # Read file as raw binary bytes (no encoding, no Base64)
-    weights_bytes = None
+    
     if weights_file:
-        # Ensure we read in binary mode (Flask file uploads are already binary by default)
-        weights_bytes = weights_file.read()
-        # Reset file pointer in case it's needed elsewhere
-        weights_file.seek(0)
+        # We MUST save to a temp file because the Flask request stream closes 
+        # immediately after this function returns.
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, f"{model_id}_upload.pt")
+        
+        # Save the file stream to disk (fast)
+        weights_file.save(temp_path)
+        
+        # 3. Define the background worker function
+        def background_upload_task(f_path, m_id, m_name, res, active):
+            print(f"--- [Background] Upload started for {m_id} ---")
+            try:
+                # Open the temp file and stream it to GridFS
+                # This is the part that takes 10 minutes, but now it runs in the background
+                with open(f_path, 'rb') as f_stream:
+                    upsert_model(m_id, m_name, f_stream, res, is_active=active)
+                print(f"--- [Background] Upload finished successfully for {m_id} ---")
+            except Exception as e:
+                print(f"--- [Background] Upload FAILED for {m_id}: {e} ---")
+            finally:
+                # Cleanup: Delete the temp file to free up space
+                if os.path.exists(f_path):
+                    os.remove(f_path)
 
-    doc = upsert_model(model_id, model_name, weights_bytes, results, is_active=is_active)
-    if doc is None:
-        return jsonify({'error': 'failed_to_save_model'}), 500
-    return jsonify({'ok': True, 'model_id': model_id})
-
+        # 4. Start the background thread
+        thread = threading.Thread(
+            target=background_upload_task, 
+            args=(temp_path, model_id, model_name, results, is_active)
+        )
+        thread.start()
+        
+        # 5. Return Success IMMEDIATELY
+        return jsonify({
+            'ok': True, 
+            'model_id': model_id, 
+            'status': 'uploading_in_background',
+            'message': 'File accepted. Uploading in background. Please wait for it to appear in the model list.'
+        })
+    
+    else:
+        # Metadata-only update (fast, no need for background)
+        upsert_model(model_id, model_name, None, results, is_active=is_active)
+        return jsonify({'ok': True, 'model_id': model_id})
 
 @app.route('/models', methods=['GET'])
 def get_models():

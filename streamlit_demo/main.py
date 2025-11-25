@@ -15,6 +15,7 @@ if _project_root not in sys.path:
 
 from client.crawler import run_crawl_once
 from app import decompress_image_to_base64
+from app.config import API_TIMEOUT
 
 st.set_page_config(page_title="hCAPTCHA Demo", layout="wide")
 st.title("hCAPTCHA Workflow Demonstration")
@@ -683,8 +684,8 @@ elif page == "Crawl -> API":
 elif page == "Create/Update Model":
     st.subheader("Create / Update Model")
     with st.form("model_form"):
-        model_id = st.text_input("Model ID", placeholder="yolov8n-v1")
-        model_name = st.text_input("Model Name", placeholder="YOLOv8 Nano v1")
+        model_id = st.text_input("Model ID", placeholder="m-001")
+        model_name = st.text_input("Model Name", placeholder="yolov8-object-001")
         weights = st.file_uploader("Weights (.pt)", type=["pt"])
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -716,7 +717,7 @@ elif page == "Create/Update Model":
             if weights is not None:
                 files = {"weights": (weights.name, weights, "application/octet-stream")}
             try:
-                resp = requests.post("http://localhost:5000/models", data=data, files=files, timeout=120)
+                resp = requests.post("http://localhost:5000/models", data=data, files=files, timeout=API_TIMEOUT)
                 if resp.ok:
                     st.success("Model saved.")
                 else:
@@ -727,7 +728,7 @@ elif page == "Create/Update Model":
     st.markdown("---")
     if st.button("List Models"):
         try:
-            resp = requests.get("http://localhost:5000/models", timeout=30)
+            resp = requests.get("http://localhost:5000/models", timeout=API_TIMEOUT)
             if resp.ok:
                 items = resp.json().get("items", [])
                 for it in items:

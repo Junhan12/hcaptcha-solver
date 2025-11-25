@@ -16,11 +16,8 @@ from .database import (
     list_models,
 )
 
-# Import the Flask app instance from the API gateway
-try:
-    from .api_gateway import app as flask_app
-except Exception:  # lazy import fallback in environments without Flask at import time
-    flask_app = None  # type: ignore
+# Keep it None until create_app() is called.
+flask_app = None  # type: ignore
 
 
 def create_app():
@@ -29,10 +26,10 @@ def create_app():
     This provides a minimal factory for WSGI servers (e.g., gunicorn) or
     external callers that prefer `from app import create_app`.
     """
+    global flask_app
     if flask_app is None:
-        # Import here to avoid circulars or missing dependencies at module import
         from .api_gateway import app as _app
-        return _app
+        flask_app = _app
     return flask_app
 
 

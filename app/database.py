@@ -135,7 +135,7 @@ def _fs_available():
     return _db_available() and _fs is not None
 
 
-def upsert_model(model_id, model_name, weights_bytes, results, is_active=False):
+def upsert_model(model_id, model_name, weights_file_stream, results, is_active=False):
     """
     Create or update a model document.
 
@@ -148,7 +148,7 @@ def upsert_model(model_id, model_name, weights_bytes, results, is_active=False):
         return None
 
     weights_id = None
-    if weights_bytes and _fs_available():
+    if weights_file_stream and _fs_available():
         try:
             # Overwrite by model_id-tagged filename for friendly lookup
             filename = f"{model_id}.pt"
@@ -160,32 +160,19 @@ def upsert_model(model_id, model_name, weights_bytes, results, is_active=False):
                 except Exception:
                     pass
             
-            # Store raw binary bytes directly in GridFS (no Base64 encoding)
-            # GridFS handles binary data natively - it stores bytes directly without any encoding
-            # Pass bytes directly or use BytesIO - both work, but BytesIO is more explicit for file-like interface
-            from io import BytesIO
-            
-            # Ensure we have raw binary bytes (not string, not encoded)
-            if isinstance(weights_bytes, str):
-                # If somehow we got a string, encode it back to bytes
-                # This shouldn't happen, but just in case
-                weights_bytes = weights_bytes.encode('latin-1')
-            
-            # Create a file-like object from bytes for GridFS
-            weights_stream = BytesIO(weights_bytes)
-            
             # Put file in GridFS - stores raw binary data directly
             # GridFS does NOT encode to Base64 - it stores binary data as-is in chunks
             # The chunk_size parameter controls chunk size (default 255KB)
             # Smaller chunk_size = more chunks = more metadata overhead
             # Larger chunk_size = fewer chunks = less overhead but larger individual chunks
+            print("start putting file in GridFS")
             weights_id = _fs.put(
-                weights_stream, 
-                filename=filename, 
-                content_type="application/octet-stream"
-                # Note: GridFS stores binary data natively - no encoding parameter needed
-                # It will store the bytes directly without Base64 or any text encoding
+                weights_file_stream, 
+                filename=f"{model_id}.pt", 
+                content_type="application/octet-stream",
+                chunk_size=4 * 1024 * 1024 
             )
+            print("finished putting file in GridFS")
         except Exception as e:
             print(f"Error storing model weights in GridFS: {e}")
             import traceback
@@ -202,10 +189,9 @@ def upsert_model(model_id, model_name, weights_bytes, results, is_active=False):
         doc["weights"] = weights_id
 
     try:
-        # If activating this model, deactivate others first
-        if is_active:
-            _db.model.update_many({}, {"$set": {"is_active": False}})
+        print("start updating model")
         _db.model.update_one({"model_id": model_id}, {"$set": doc}, upsert=True)
+        print("finished updating model")
         return _db.model.find_one({"model_id": model_id})
     except Exception:
         return None
@@ -253,9 +239,12 @@ def download_weights_bytes(model_id):
         if not doc or not doc.get("weights"):
             return None
         file_id = doc["weights"]
+        print("start getting file from GridFS")
         gridout = _fs.get(file_id)
+        print("finished getting file from GridFS")
         # Read raw binary bytes (GridFS returns binary data directly)
         weights_bytes = gridout.read()
+        print("finished reading file from GridFS")
         return weights_bytes
     except Exception as e:
         print(f"Error downloading model weights: {e}")

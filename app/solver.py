@@ -52,7 +52,7 @@ def solve_captcha(image, question, config, postprocess_steps=None):
     if postprocess_steps:
         conf_threshold = postprocess_steps.get('confidence_threshold', conf_threshold)
         iou_threshold = postprocess_steps.get('iou_threshold', iou_threshold)
-    
+    print("start solving captcha")
     try:
         print("in solver.py")
         
@@ -76,7 +76,9 @@ def solve_captcha(image, question, config, postprocess_steps=None):
             elif download_weights_bytes:
                 # Try to load weights from database
                 try:
+                    print("start downloading weights from database")
                     weights_bytes = download_weights_bytes(model_id)
+                    print("finished downloading weights from database")
                     if weights_bytes:
                         # Cache the weights bytes
                         _weights_cache[model_id] = weights_bytes
