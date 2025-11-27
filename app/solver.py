@@ -28,6 +28,82 @@ _weights_cache = {}  # Cache weights bytes to avoid re-downloading
 _temp_file_cache = {}  # Cache temp file paths for database-loaded models
 
 
+def clear_model_cache(model_id=None):
+    """
+    Clear model cache. If model_id is provided, clears only that model's cache.
+    If model_id is None, clears all cached models.
+    
+    Args:
+        model_id: Optional model ID to clear. If None, clears all models.
+    
+    Returns:
+        dict with information about what was cleared
+    """
+    cleared = {
+        'models': 0,
+        'weights': 0,
+        'temp_files': 0,
+        'temp_file_paths': []
+    }
+    
+    if model_id:
+        # Clear specific model
+        if model_id in _model_cache:
+            del _model_cache[model_id]
+            cleared['models'] = 1
+        
+        if model_id in _weights_cache:
+            del _weights_cache[model_id]
+            cleared['weights'] = 1
+        
+        if model_id in _temp_file_cache:
+            tmp_path = _temp_file_cache[model_id]
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                    cleared['temp_files'] = 1
+                    cleared['temp_file_paths'].append(tmp_path)
+                except Exception as e:
+                    print(f"Warning: Could not delete temp file {tmp_path}: {e}")
+            del _temp_file_cache[model_id]
+    else:
+        # Clear all models
+        cleared['models'] = len(_model_cache)
+        cleared['weights'] = len(_weights_cache)
+        _model_cache.clear()
+        _weights_cache.clear()
+        
+        # Delete all temp files
+        for model_id_key, tmp_path in list(_temp_file_cache.items()):
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                    cleared['temp_files'] += 1
+                    cleared['temp_file_paths'].append(tmp_path)
+                except Exception as e:
+                    print(f"Warning: Could not delete temp file {tmp_path}: {e}")
+        _temp_file_cache.clear()
+    
+    return cleared
+
+
+def get_cache_info():
+    """
+    Get information about the current model cache.
+    
+    Returns:
+        dict with cache statistics
+    """
+    return {
+        'cached_models': list(_model_cache.keys()),
+        'cached_weights': list(_weights_cache.keys()),
+        'cached_temp_files': {k: v for k, v in _temp_file_cache.items()},
+        'model_count': len(_model_cache),
+        'weights_count': len(_weights_cache),
+        'temp_file_count': len(_temp_file_cache)
+    }
+
+
 def solve_captcha(image, question, config, postprocess_steps=None):
     """
     Run YOLO model inference on image with optional postprocessing steps.
