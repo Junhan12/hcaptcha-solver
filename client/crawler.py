@@ -29,6 +29,26 @@ except Exception:
     # Fallback: use API to check
     _find_challenge_type_for_question = None
 
+def get_challenge_type_id_for_question(question):
+    """
+    Get challenge_type_id for a given question.
+    
+    Args:
+        question: Question text string
+    
+    Returns:
+        challenge_type_id string (e.g., 'ct-001') or None if not found
+    """
+    if not question or not _find_challenge_type_for_question:
+        return None
+    try:
+        ct_doc = _find_challenge_type_for_question(question)
+        if ct_doc:
+            return ct_doc.get("challenge_type_id")
+    except Exception as e:
+        print(f"Error getting challenge_type_id: {e}")
+    return None
+
 try:
     from client.clicker import perform_clicks  # type: ignore
     print("/ Successfully imported perform_clicks from client.clicker")
@@ -137,11 +157,17 @@ def send_canvas_images(driver, question):
                 if perform_clicks and isinstance(result, dict):
                     print("Inside perform_clicks function")
                     try:
+                        # Get challenge_type_id for validation
+                        challenge_type_id = get_challenge_type_id_for_question(question)
+                        if challenge_type_id:
+                            print(f"  [crawler] Challenge type ID: {challenge_type_id} - applying validation rules")
+                        
                         click_count = perform_clicks(
                             driver,
                             "canvas",
                             result,
                             canvas_element=canvas,
+                            challenge_type_id=challenge_type_id,
                         )
                         if click_count > 0:
                             print(f"  / Automated canvas clicking executed: {click_count} clicks performed.")
@@ -296,11 +322,17 @@ def send_nested_div_images(driver, question):
 
         if perform_clicks and isinstance(result, dict):
             try:
+                # Get challenge_type_id for validation
+                challenge_type_id = get_challenge_type_id_for_question(question)
+                if challenge_type_id:
+                    print(f"  [crawler] Challenge type ID: {challenge_type_id} - applying validation rules")
+                
                 click_count = perform_clicks(
                     driver,
                     "tiles",
                     result,
                     tile_elements=divs,
+                    challenge_type_id=challenge_type_id,
                 )
                 if click_count > 0:
                     print(f"  / Automated tile clicking executed: {click_count} clicks performed.")
@@ -472,6 +504,35 @@ def click_refresh_button(driver, attempt_number):
         return False
 
 
+def click_submit_button(driver, wait_after_click=3):
+    """
+    Click the submit button to proceed to next crumb or verify challenge.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        wait_after_click: Seconds to wait after clicking (default: 3)
+    
+    Returns:
+        bool: True if button was clicked successfully, False otherwise
+    """
+    try:
+        print(f"\nClicking submit button...")
+        submit_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//div[@class='button-submit button']"))
+        )
+        driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
+        time.sleep(0.5)
+        submit_button.click()
+        print(f"/ Submit button clicked. Waiting {wait_after_click} seconds...")
+        time.sleep(wait_after_click)
+        return True
+    except Exception as e:
+        print(f"X Error clicking submit button: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def run_crawl_once():
     """Run single crawl of hCaptcha challenge."""
     print(f"\n============================")
@@ -627,30 +688,28 @@ def run_crawl_once():
                         summary["sent_divs"] += div_sent
                         all_accepted.extend(div_accepted)
                 else:
-                    print("No canvas found â€” scanning nested image divs...")
+                    print("No canvas found, scanning nested image divs...")
                     sent, accepted = send_nested_div_images(driver, prompt_text)
                     print(f"Sent {sent} nested image(s) as batch for crumb {crumb_idx}.")
                     summary["sent_divs"] += sent
                     all_accepted.extend(accepted)
                 
-                # After processing first crumb, click submit button to proceed to next crumb
+                # After processing crumb, click submit button:
+                # - If not last crumb: proceed to next crumb
+                # - If last crumb: verify challenge
                 if crumb_idx < crumb_count:
+                    # Not last crumb: proceed to next crumb
                     print(f"\nClicking submit button to proceed to crumb {crumb_idx + 1}...")
-                    try:
-                        submit_button = WebDriverWait(driver, 10).until(
-                            EC.element_to_be_clickable((By.XPATH, "//div[@class='button-submit button']"))
-                        )
-                        driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
-                        time.sleep(0.5)
-                        submit_button.click()
-                        print(f"/ Submit button clicked. Waiting for next crumb to load...")
-                        time.sleep(3)  # Wait for next crumb to load
-                    except Exception as e:
-                        print(f"X Error clicking submit button: {e}")
+                    if not click_submit_button(driver, wait_after_click=3):
+                        print(f"X Failed to click submit button. Stopping multi-crumb processing.")
                         break
+                else:
+                    # Last crumb: click submit to verify challenge
+                    print(f"\nLast crumb processed. Clicking submit button to verify challenge...")
+                    click_submit_button(driver, wait_after_click=3)
         else:
-            # Single crumb challenge: process normally
-            print(f"Single-crumb challenge. Proceeding with inference...")
+            # Single crumb challenge (no crumbs found): process normally
+            print(f"Single-crumb challenge (no crumbs found). Proceeding with inference...")
             
             canvases = driver.find_elements(By.TAG_NAME, "canvas")
             if canvases:
@@ -671,6 +730,10 @@ def run_crawl_once():
                 print(f"Sent {sent} nested image(s) as batch.")
                 summary["sent_divs"] = sent
                 all_accepted = accepted
+            
+            # After single crumb processing, click submit button to verify challenge
+            print(f"\nSingle crumb processed. Clicking submit button to verify challenge...")
+            click_submit_button(driver, wait_after_click=3)
         
         summary["total_sent"] = summary["sent_canvas"] + summary["sent_divs"]
         summary["accepted"] = all_accepted
@@ -710,7 +773,10 @@ def run_crawl_once():
         traceback.print_exc()
     finally:
         if driver is not None:
-            # Close browser in all cases
+            # Wait 5 seconds before closing the browser to allow verification to complete
+            print(f"\nWaiting 5 seconds before closing browser...")
+            time.sleep(5)
+            print(f"Closing browser...")
             driver.quit()
         
         if matched:

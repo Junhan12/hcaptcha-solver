@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 import re
 from typing import Dict, Iterable, List, Optional
+from collections import Counter
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
@@ -37,6 +38,58 @@ def _extract_detections(result: Dict):
         return []
     
     return detections
+
+
+def _validate_detections_by_challenge_type(detections: List[Dict], challenge_type_id: Optional[str] = None) -> List[Dict]:
+    """
+    Apply challenge-type-specific validation rules to filter detections.
+    
+    Args:
+        detections: List of detection dictionaries, each with 'class' and other fields
+        challenge_type_id: Optional challenge type ID (e.g., 'ct-001')
+    
+    Returns:
+        Filtered list of detections based on challenge type rules
+    """
+    if not detections or not challenge_type_id:
+        return detections
+    
+    # Filter for valid detections (must have class and bbox)
+    valid_detections = [
+        d for d in detections 
+        if isinstance(d, dict) 
+        and 'class' in d 
+        and 'bbox' in d 
+        and isinstance(d.get('bbox'), (list, tuple))
+        and len(d.get('bbox', [])) >= 4
+    ]
+    
+    if not valid_detections:
+        return []
+    
+    # Challenge type ct-001: "click", "two elements", "similar"
+    # Rule: Only click objects that appear exactly twice (duplicates)
+    if challenge_type_id == "ct-001":
+        # Count occurrences of each class
+        class_counts = Counter(d.get('class', '') for d in valid_detections)
+        
+        print(f"  [validation] Challenge type ct-001: Class counts = {dict(class_counts)}")
+        
+        # Filter to only include detections for classes that appear exactly twice
+        filtered = [
+            d for d in valid_detections 
+            if class_counts.get(d.get('class', ''), 0) == 2
+        ]
+        
+        duplicate_classes = [cls for cls, count in class_counts.items() if count == 2]
+        print(f"  [validation] Classes appearing twice (to click): {duplicate_classes}")
+        print(f"  [validation] Filtered {len(valid_detections)} detections to {len(filtered)} (only duplicates)")
+        
+        return filtered
+    
+    # For other challenge types, return all valid detections (no filtering)
+    # Future challenge types can be added here with their specific rules
+    return valid_detections
 
 
 def _move_and_click(
@@ -106,12 +159,21 @@ def click_canvas_from_response(
     api_result: Dict,
     confidence_threshold: float = 0.0,
     pause_seconds: float = 0.25,
+    challenge_type_id: Optional[str] = None,
 ):
     """
     Use detections returned from /solve_hcaptcha to click positions on the canvas.
     Note: Detections are already filtered by the model's confidence and IoU thresholds
     during inference. This function clicks on ALL returned detections by default
-    (confidence_threshold=0.0).
+    (confidence_threshold=0.0), unless challenge_type_id validation rules apply.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        canvas_element: Canvas WebElement to click on
+        api_result: API response dictionary with detections
+        confidence_threshold: Minimum confidence to click (default: 0.0)
+        pause_seconds: Delay between clicks (default: 0.25)
+        challenge_type_id: Optional challenge type ID for validation rules (e.g., 'ct-001')
     
     Returns number of successful click attempts.
     """
@@ -120,6 +182,15 @@ def click_canvas_from_response(
     
     if not detections:
         print(f"  [click_canvas] No detections found in API result. Result keys: {list(api_result.keys()) if isinstance(api_result, dict) else 'not a dict'}")
+        return 0
+    
+    # Apply challenge-type-specific validation
+    if challenge_type_id:
+        detections = _validate_detections_by_challenge_type(detections, challenge_type_id)
+        print(f"  [click_canvas] After validation: {len(detections)} detections remain")
+    
+    if not detections:
+        print(f"  [click_canvas] No detections remaining after validation")
         return 0
     
     click_count = 0
@@ -214,7 +285,20 @@ def _has_positive_detection(entries: Iterable[Dict], confidence_threshold: float
     return False
 
 
-def click_tiles_from_batch_response(driver, tile_elements, api_result, confidence_threshold=0.0):
+def click_tiles_from_batch_response(driver, tile_elements, api_result, confidence_threshold=0.0, challenge_type_id=None):
+    """
+    Click tiles based on batch API response results.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        tile_elements: List of tile WebElements
+        api_result: Batch API response dictionary
+        confidence_threshold: Minimum confidence to click (default: 0.0)
+        challenge_type_id: Optional challenge type ID for validation rules (e.g., 'ct-001')
+    
+    Returns:
+        Number of successful clicks
+    """
     print(f"\n{'='*60}")
     print(f"TILE CLICKING DEBUG")
     print(f"{'='*60}")
@@ -222,6 +306,9 @@ def click_tiles_from_batch_response(driver, tile_elements, api_result, confidenc
     
     batch_results = api_result.get("results", [])
     print(f"Total batch results from API: {len(batch_results)}")
+    
+    if challenge_type_id:
+        print(f"Challenge type: {challenge_type_id} - applying validation rules")
     
     # Filter tile_elements to only include valid tiles (same filtering as in crawler)
     # The tile_elements list might contain more divs than actual tiles
@@ -251,18 +338,54 @@ def click_tiles_from_batch_response(driver, tile_elements, api_result, confidenc
     
     tiles_to_click = set()
     
-    for entry in batch_results:
-        idx = entry.get("image_index")
-        # image_index is 1-based from API, convert to 0-based index in valid_tile_elements
-        # If sample_offset is 1, then image_index 1 maps to valid_tile_elements[1] (2nd tile)
-        tile_idx = int(idx) - 1 + sample_offset
-        detections = entry.get("results", [])
-        has_positive = _has_positive_detection(detections, confidence_threshold)
+    # For challenge type ct-001, we need to collect all detections across all tiles first
+    # to count class occurrences, then determine which tiles to click
+    if challenge_type_id == "ct-001":
+        # Collect all detections from all tiles
+        all_detections = []
+        for entry in batch_results:
+            detections = entry.get("results", [])
+            if isinstance(detections, list):
+                all_detections.extend(detections)
         
-        print(f"  Tile {idx} (API image_index): {len(detections)} detections, positive={has_positive} -> maps to element index {tile_idx}")
+        # Apply validation to get classes that should be clicked (appear twice)
+        validated_detections = _validate_detections_by_challenge_type(all_detections, challenge_type_id)
+        valid_classes = set(d.get('class', '') for d in validated_detections)
         
-        if has_positive:
-            tiles_to_click.add(tile_idx)
+        print(f"  [validation] Valid classes to click (appear twice): {valid_classes}")
+        
+        # Now determine which tiles contain these valid classes
+        for entry in batch_results:
+            idx = entry.get("image_index")
+            tile_idx = int(idx) - 1 + sample_offset
+            detections = entry.get("results", [])
+            
+            if isinstance(detections, list):
+                # Check if this tile has any detection with a valid class (appears twice)
+                has_valid_class = any(
+                    d.get('class', '') in valid_classes 
+                    for d in detections 
+                    if isinstance(d, dict) and 'class' in d
+                )
+                
+                print(f"  Tile {idx} (API image_index): {len(detections)} detections, has_valid_class={has_valid_class} -> maps to element index {tile_idx}")
+                
+                if has_valid_class:
+                    tiles_to_click.add(tile_idx)
+    else:
+        # Default behavior: click tiles with any positive detection
+        for entry in batch_results:
+            idx = entry.get("image_index")
+            # image_index is 1-based from API, convert to 0-based index in valid_tile_elements
+            # If sample_offset is 1, then image_index 1 maps to valid_tile_elements[1] (2nd tile)
+            tile_idx = int(idx) - 1 + sample_offset
+            detections = entry.get("results", [])
+            has_positive = _has_positive_detection(detections, confidence_threshold)
+            
+            print(f"  Tile {idx} (API image_index): {len(detections)} detections, positive={has_positive} -> maps to element index {tile_idx}")
+            
+            if has_positive:
+                tiles_to_click.add(tile_idx)
     
     print(f"\n✓ Tiles to click (1-based): {sorted([i+1 for i in tiles_to_click])}")
     print(f"✓ Tiles to click (0-based indices): {sorted(tiles_to_click)}")
@@ -299,12 +422,13 @@ def perform_clicks(
     tile_elements: Optional[List[WebElement]] = None,
     confidence_threshold: float = 0.0, 
     pause_seconds: float = 1.0,
+    challenge_type_id: Optional[str] = None,
 ) -> int:
     """
     Unified entry point used by the crawler to trigger clicks based on API results.
     Note: Detections are already filtered by the model's confidence and IoU thresholds
     during inference. This function clicks on ALL returned detections by default
-    (confidence_threshold=0.0).
+    (confidence_threshold=0.0), unless challenge_type_id validation rules apply.
     
     Args:
         driver: Active Selenium WebDriver instance.
@@ -314,12 +438,13 @@ def perform_clicks(
         tile_elements: Optional list of tile div WebElements for batch mode.
         confidence_threshold: Minimum confidence needed to click (default: 0.0 = click all returned detections).
         pause_seconds: Delay between successive canvas clicks.
+        challenge_type_id: Optional challenge type ID for validation rules (e.g., 'ct-001').
     
     Returns:
         Number of clicks attempted.
     """
     mode = (mode or "").lower()
-    print(f"  [perform_clicks] Mode: {mode}, confidence_threshold: {confidence_threshold}")
+    print(f"  [perform_clicks] Mode: {mode}, confidence_threshold: {confidence_threshold}, challenge_type_id: {challenge_type_id}")
     
     if mode not in {"canvas", "tiles"}:
         raise ValueError(f"mode must be either 'canvas' or 'tiles', got: {mode}")
@@ -344,6 +469,7 @@ def perform_clicks(
             api_result,
             confidence_threshold=confidence_threshold,
             pause_seconds=pause_seconds,
+            challenge_type_id=challenge_type_id,
         )
     
     # mode == "tiles"
@@ -364,4 +490,5 @@ def perform_clicks(
         targets,
         api_result,
         confidence_threshold=confidence_threshold,
+        challenge_type_id=challenge_type_id,
     )
