@@ -227,6 +227,54 @@ def set_active_model(model_id):
         return False
 
 
+def delete_model(model_id):
+    """
+    Delete a model from MongoDB and its associated GridFS weights.
+    
+    Args:
+        model_id: The model_id of the model to delete
+    
+    Returns:
+        dict with 'success' (bool) and 'message' (str) indicating the result
+    """
+    if not _db_available():
+        return {'success': False, 'message': 'Database not available'}
+    
+    try:
+        # Find the model document
+        model_doc = _db.model.find_one({"model_id": model_id})
+        if not model_doc:
+            return {'success': False, 'message': f'Model with ID "{model_id}" not found'}
+        
+        # Delete GridFS weights if they exist
+        weights_deleted = False
+        if model_doc.get("weights") and _fs_available():
+            try:
+                _fs.delete(model_doc["weights"])
+                weights_deleted = True
+                print(f"Deleted GridFS weights for model {model_id}")
+            except Exception as e:
+                print(f"Warning: Could not delete GridFS weights for model {model_id}: {e}")
+        
+        # Delete the model document
+        result = _db.model.delete_one({"model_id": model_id})
+        
+        if result.deleted_count > 0:
+            message = f'Model "{model_id}" deleted successfully'
+            if weights_deleted:
+                message += ' (including weights)'
+            return {'success': True, 'message': message}
+        else:
+            return {'success': False, 'message': f'Failed to delete model "{model_id}"'}
+    
+    except Exception as e:
+        error_msg = f'Error deleting model "{model_id}": {str(e)}'
+        print(error_msg)
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'message': error_msg}
+
+
 def download_weights_bytes(model_id):
     """Return weights bytes for a model_id or None.
     
