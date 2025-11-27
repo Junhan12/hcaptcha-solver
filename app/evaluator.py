@@ -639,14 +639,25 @@ def load_validation_dataset(data_yaml_path: str) -> Tuple[List[str], List[List[D
     # Find images directory (usually 'images' subdirectory in val)
     images_dir = os.path.join(val_dir, 'images')
     if not os.path.exists(images_dir):
-        # Try val_dir itself
+        # Try val_dir itself (val might already point to images directory)
         images_dir = val_dir
     
-    # Find labels directory (usually 'labels' subdirectory in val)
-    labels_dir = os.path.join(val_dir, 'labels')
-    if not os.path.exists(labels_dir):
-        # Try val_dir itself
-        labels_dir = val_dir
+    # Find labels directory
+    # Handle case where val_path points directly to 'images' directory
+    # In that case, labels should be in sibling 'labels' directory
+    if os.path.basename(val_dir).lower() == 'images':
+        # val_dir is already the images directory, so labels should be in parent/labels
+        parent_dir = os.path.dirname(val_dir)
+        labels_dir = os.path.join(parent_dir, 'labels')
+        if not os.path.exists(labels_dir):
+            # Fallback: try val_dir itself (though this is unlikely to have labels)
+            labels_dir = val_dir
+    else:
+        # val_dir is the parent directory, labels should be in val_dir/labels
+        labels_dir = os.path.join(val_dir, 'labels')
+        if not os.path.exists(labels_dir):
+            # Try val_dir itself
+            labels_dir = val_dir
     
     # Get all image files
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
@@ -660,6 +671,11 @@ def load_validation_dataset(data_yaml_path: str) -> Tuple[List[str], List[List[D
     # Load annotations for each image
     all_annotations = []
     valid_image_files = []
+    
+    # Debug: Print directory paths
+    print(f"Debug: images_dir = {images_dir}")
+    print(f"Debug: labels_dir = {labels_dir}")
+    print(f"Debug: labels_dir exists = {os.path.exists(labels_dir)}")
     
     for img_path in image_files:
         # Get corresponding annotation file
@@ -679,6 +695,10 @@ def load_validation_dataset(data_yaml_path: str) -> Tuple[List[str], List[List[D
         
         # Load annotations
         annotations = load_yolo_annotation(annotation_file, img_width, img_height, class_names)
+        if annotations:
+            print(f"Debug: Loaded {len(annotations)} annotations from {annotation_file}")
+        else:
+            print(f"Debug: No annotations found in {annotation_file} (file exists: {os.path.exists(annotation_file)})")
         all_annotations.append(annotations)
         valid_image_files.append(img_path)
     

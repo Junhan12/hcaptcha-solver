@@ -6,6 +6,7 @@ import sys
 import base64
 import time
 import io
+from datetime import datetime
 
 # Ensure project root is on sys.path to import client and app modules
 _this_dir = os.path.dirname(__file__)
@@ -16,7 +17,17 @@ if _project_root not in sys.path:
 from client.crawler import run_crawl_once
 from app import decompress_image_to_base64
 from app.config import API_TIMEOUT
-from app.database import list_models, get_model_by_id, get_preprocess_for_model, get_postprocess_for_model
+from app.database import list_models, get_model_by_id, get_preprocess_for_model, get_postprocess_for_model, upsert_model
+
+# Import delete_model with error handling for Streamlit caching issues
+try:
+    from app.database import delete_model
+except ImportError:
+    # If import fails, try to reload the module
+    import importlib
+    import app.database
+    importlib.reload(app.database)
+    from app.database import delete_model
 from app.solver import solve_captcha
 
 # Import cache functions - handle potential cache issues
@@ -100,8 +111,143 @@ elif main_section == "2. View EDA":
     
 elif main_section == "3. Data Preprocessing":
     st.header("Data Preprocessing")
-    st.info("Configure and apply preprocessing steps to your dataset images.")
-    st.write("🚧 **Feature coming soon** - This will allow you to configure preprocessing profiles and apply them to images.")
+    st.info("Select a model and upload images to apply the model's preprocessing steps.")
+    
+    # Model selection
+    try:
+        models = list_models(limit=100)
+        if not models:
+            st.warning("No models found in MongoDB. Please create a model first in the 'Create and Upload Model' section.")
+        else:
+            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in models}
+            selected_preprocess_model_name = st.selectbox(
+                "Select Model",
+                options=list(model_options.keys()),
+                key="model_preprocess_select"
+            )
+            selected_preprocess_model_id = model_options[selected_preprocess_model_name]
+            selected_preprocess_model = get_model_by_id(selected_preprocess_model_id)
+            
+            if selected_preprocess_model:
+                st.markdown("### Model Information")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.caption(f"**Model ID:** {selected_preprocess_model.get('model_id', 'N/A')}")
+                with col2:
+                    st.caption(f"**Model Name:** {selected_preprocess_model.get('model_name', 'N/A')}")
+                
+                # Get preprocessing profile for the selected model
+                preprocess_profile = get_preprocess_for_model(selected_preprocess_model)
+                
+                if preprocess_profile:
+                    st.markdown("### Preprocessing Profile")
+                    st.info(f"**Preprocessing ID:** {preprocess_profile.get('preprocess_id', 'N/A')}")
+                    if preprocess_profile.get('name'):
+                        st.caption(f"**Name:** {preprocess_profile.get('name', 'N/A')}")
+                    
+                    steps = preprocess_profile.get('steps', [])
+                    if steps:
+                        st.caption(f"**Number of Steps:** {len(steps)}")
+                        with st.expander("View Preprocessing Steps"):
+                            for idx, step in enumerate(steps, 1):
+                                operation = step.get('operation', 'Unknown')
+                                params = step.get('params', {})
+                                st.write(f"{idx}. **{operation}**")
+                                if params:
+                                    st.json(params)
+                    else:
+                        st.warning("⚠️ This model has a preprocessing profile but no steps defined.")
+                else:
+                    st.warning("⚠️ This model does not have a preprocessing profile configured.")
+                
+                st.markdown("---")
+                
+                # Image upload section
+                st.markdown("### Upload Image for Preprocessing")
+                uploaded_image = st.file_uploader(
+                    "Upload Image",
+                    type=["jpg", "jpeg", "png", "bmp"],
+                    key="preprocess_image_upload"
+                )
+                
+                if uploaded_image and preprocess_profile:
+                    if st.button("Apply Preprocessing", key="apply_preprocess_button"):
+                        with st.spinner("Applying preprocessing steps..."):
+                            try:
+                                # Read original image bytes
+                                original_img_bytes = uploaded_image.read()
+                                
+                                # Apply preprocessing
+                                processed_img_bytes, applied_steps = apply_preprocess(original_img_bytes, preprocess_profile)
+                                
+                                # Display results
+                                st.markdown("### Preprocessing Results")
+                                
+                                # Load images for display
+                                original_img = Image.open(io.BytesIO(original_img_bytes))
+                                processed_img = Image.open(io.BytesIO(processed_img_bytes))
+                                
+                                # Get processed image dimensions (for sizing)
+                                processed_width, processed_height = processed_img.size
+                                
+                                # Display images side by side
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    st.markdown("#### Original Image")
+                                    st.image(
+                                        original_img,
+                                        caption=f"Original ({original_img.size[0]} × {original_img.size[1]})",
+                                        width=processed_width  # Use processed image width
+                                    )
+                                
+                                with col2:
+                                    st.markdown("#### Preprocessed Image")
+                                    st.image(
+                                        processed_img,
+                                        caption=f"Preprocessed ({processed_width} × {processed_height})",
+                                        width=processed_width
+                                    )
+                                
+                                # Display preprocessing steps applied
+                                st.markdown("### Applied Preprocessing Steps")
+                                if applied_steps:
+                                    steps_data = []
+                                    for idx, step in enumerate(applied_steps, 1):
+                                        operation = step.get('operation', 'Unknown')
+                                        params = step.get('params', {})
+                                        steps_data.append({
+                                            "Step": idx,
+                                            "Operation": operation,
+                                            "Parameters": str(params) if params else "None"
+                                        })
+                                    
+                                    import pandas as pd
+                                    df_steps = pd.DataFrame(steps_data)
+                                    st.dataframe(df_steps, width='stretch', hide_index=True)
+                                else:
+                                    st.info("No preprocessing steps were applied (or preprocessing profile has no steps).")
+                                
+                                # Image size comparison
+                                st.markdown("### Image Size Comparison")
+                                size_col1, size_col2 = st.columns(2)
+                                with size_col1:
+                                    st.metric("Original Size", f"{original_img.size[0]} × {original_img.size[1]}")
+                                with size_col2:
+                                    st.metric("Processed Size", f"{processed_width} × {processed_height}")
+                                
+                            except Exception as e:
+                                st.error(f"Error applying preprocessing: {e}")
+                                import traceback
+                                st.code(traceback.format_exc())
+                
+                elif uploaded_image and not preprocess_profile:
+                    st.error("⚠️ Cannot apply preprocessing: Selected model does not have a preprocessing profile.")
+                
+    except Exception as e:
+        st.error(f"Error loading models: {e}")
+        import traceback
+        st.code(traceback.format_exc())
     
 elif main_section == "4. Data Augmentation":
     st.header("Data Augmentation")
@@ -111,20 +257,13 @@ elif main_section == "4. Data Augmentation":
 elif main_section == "5. Create and Upload Model":
     # Use existing "Create/Update Model" functionality
     st.subheader("Create / Update Model")
+    st.info("💡 Evaluation results will be automatically updated when you run the Model Training Evaluation.")
+    
     with st.form("model_form"):
         model_id = st.text_input("Model ID", placeholder="m-001")
         model_name = st.text_input("Model Name", placeholder="yolov8-object-001")
         weights = st.file_uploader("Weights (.pt)", type=["pt"])
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            precision = st.number_input("precision", min_value=0.0, max_value=1.0, step=0.0001, format="%0.4f")
-            recall = st.number_input("recall", min_value=0.0, max_value=1.0, step=0.0001, format="%0.4f")
-        with col2:
-            f1_score = st.number_input("f1_score", min_value=0.0, max_value=1.0, step=0.0001, format="%0.4f")
-            mAP50 = st.number_input("mAP50", min_value=0.0, max_value=1.0, step=0.0001, format="%0.4f")
-        with col3:
-            AP5095 = st.number_input("AP5095", min_value=0.0, max_value=1.0, step=0.0001, format="%0.4f")
-            is_active = st.checkbox("Set Active", value=False)
+        is_active = st.checkbox("Set Active", value=False)
         submitted = st.form_submit_button("Save Model")
 
     if submitted:
@@ -134,11 +273,6 @@ elif main_section == "5. Create and Upload Model":
             data = {
                 "model_id": model_id,
                 "model_name": model_name,
-                "precision": str(precision),
-                "recall": str(recall),
-                "f1_score": str(f1_score),
-                "mAP50": str(mAP50),
-                "AP5095": str(AP5095),
                 "is_active": "true" if is_active else "false",
             }
             files = {}
@@ -181,6 +315,58 @@ elif main_section == "5. Create and Upload Model":
                     st.caption(f"Deleted temp files: {len(cleared['temp_file_paths'])} files")
             except Exception as e:
                 st.error(f"Error: {e}")
+    
+    st.markdown("---")
+    
+    # Delete Model Section
+    st.subheader("Delete Model")
+    st.info("Select a model from MongoDB to delete. This will remove the model document and its associated weights from GridFS.")
+    
+    try:
+        models = list_models(limit=100)
+        if not models:
+            st.warning("No models found in MongoDB.")
+        else:
+            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in models}
+            selected_delete_model_name = st.selectbox(
+                "Select Model to Delete",
+                options=list(model_options.keys()),
+                key="model_delete_select"
+            )
+            selected_delete_model_id = model_options[selected_delete_model_name]
+            selected_delete_model = get_model_by_id(selected_delete_model_id)
+            
+            if selected_delete_model:
+                st.markdown("#### Model Details")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.caption(f"**Model ID:** {selected_delete_model.get('model_id', 'N/A')}")
+                with col2:
+                    st.caption(f"**Model Name:** {selected_delete_model.get('model_name', 'N/A')}")
+                with col3:
+                    st.caption(f"**Is Active:** {'Yes' if selected_delete_model.get('is_active') else 'No'}")
+                
+                if selected_delete_model.get('weights'):
+                    st.caption(f"⚠️ This model has weights stored in GridFS that will also be deleted.")
+                
+                # Confirmation before deletion
+                confirm_delete = st.checkbox(
+                    f"I confirm I want to delete model '{selected_delete_model.get('model_id', 'N/A')}'",
+                    key="confirm_delete_checkbox"
+                )
+                
+                if st.button("Delete Model", type="primary", disabled=not confirm_delete, key="delete_model_button"):
+                    with st.spinner("Deleting model..."):
+                        result = delete_model(selected_delete_model_id)
+                        if result['success']:
+                            st.success(result['message'])
+                            st.rerun()  # Refresh the page to update the model list
+                        else:
+                            st.error(result['message'])
+    except Exception as e:
+        st.error(f"Error loading models: {e}")
+        import traceback
+        st.code(traceback.format_exc())
     
     st.markdown("---")
     if st.button("List Models"):
@@ -298,18 +484,10 @@ elif main_section == "6. Model Training Evaluation":
                     key="data_yaml_upload_eval"
                 )
                 
-                # Optional: Upload dataset as zip file
-                dataset_zip = st.file_uploader(
-                    "Upload Dataset ZIP (Optional - if data.yaml references relative paths)",
-                    type=["zip"],
-                    key="dataset_zip_upload_eval"
-                )
-                
                 if data_yaml_file:
                     if st.button("Run Evaluation", key="run_eval_button"):
                         with st.spinner("Loading validation dataset and running evaluation..."):
                             import tempfile
-                            import zipfile
                             import shutil
                             
                             # Create temporary directory for dataset
@@ -320,27 +498,6 @@ elif main_section == "6. Model Training Evaluation":
                                     data_yaml_path = os.path.join(temp_dir, "data.yaml")
                                     with open(data_yaml_path, 'wb') as f:
                                         f.write(data_yaml_file.read())
-                                    
-                                    # Extract zip file if provided
-                                    if dataset_zip:
-                                        zip_path = os.path.join(temp_dir, "dataset.zip")
-                                        with open(zip_path, 'wb') as f:
-                                            f.write(dataset_zip.read())
-                                        
-                                        extract_dir = os.path.join(temp_dir, "dataset")
-                                        os.makedirs(extract_dir, exist_ok=True)
-                                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                                            zip_ref.extractall(extract_dir)
-                                        
-                                        # Update data.yaml path to point to extracted dataset
-                                        yaml_data = parse_data_yaml(data_yaml_path)
-                                        if yaml_data.get('path') and not os.path.isabs(yaml_data.get('path', '')):
-                                            # Update path to point to extracted dataset
-                                            updated_path = os.path.join(extract_dir, yaml_data.get('path', ''))
-                                            yaml_data['path'] = updated_path
-                                            # Write updated yaml
-                                            with open(data_yaml_path, 'w') as f:
-                                                yaml.dump(yaml_data, f)
                                     
                                     # Load validation dataset
                                     st.info("Loading validation dataset from data.yaml...")
@@ -358,6 +515,10 @@ elif main_section == "6. Model Training Evaluation":
                                             ground_truth.extend(annotations)
                                         
                                         st.info(f"Total ground truth annotations: {len(ground_truth)}")
+                                        
+                                        # Show ground truth class names from data.yaml
+                                        if class_names:
+                                            st.caption(f"📋 Ground truth classes from data.yaml: {sorted([class_names[i] for i in sorted(class_names.keys())])}")
                                         
                                         # Prepare model config for direct inference (bypassing API validation)
                                         model_config = {
@@ -439,11 +600,42 @@ elif main_section == "6. Model Training Evaluation":
                                         if all_predictions:
                                             st.success(f"Generated {len(all_predictions)} predictions from {len(image_files)} validation images")
                                             
-                                            # Run evaluation
+                                            # Debug: Show class names from predictions and ground truth
+                                            pred_classes = set([p.get('class', '') for p in all_predictions if isinstance(p, dict)])
+                                            gt_classes = set([g.get('class', '') for g in ground_truth if isinstance(g, dict)])
+                                            
+                                            with st.expander("🔍 Debug: Class Name Comparison"):
+                                                st.write("**Prediction Classes:**", sorted(pred_classes))
+                                                st.write("**Ground Truth Classes:**", sorted(gt_classes))
+                                                st.write("**Matching Classes:**", sorted(pred_classes & gt_classes))
+                                                st.write("**Only in Predictions:**", sorted(pred_classes - gt_classes))
+                                                st.write("**Only in Ground Truth:**", sorted(gt_classes - pred_classes))
+                                            
+                                            # Create class mapping if needed (map model class names to ground truth class names)
+                                            # This handles cases where model uses different class names than ground truth
+                                            class_mapping = {}
+                                            if pred_classes != gt_classes:
+                                                st.warning("⚠️ Class name mismatch detected! Attempting automatic mapping...")
+                                                # Try to match by similarity (case-insensitive, underscore/space normalization)
+                                                for pred_class in pred_classes:
+                                                    pred_normalized = pred_class.lower().replace('_', ' ').replace('-', ' ')
+                                                    for gt_class in gt_classes:
+                                                        gt_normalized = gt_class.lower().replace('_', ' ').replace('-', ' ')
+                                                        if pred_normalized == gt_normalized:
+                                                            class_mapping[pred_class] = gt_class
+                                                            break
+                                                
+                                                if class_mapping:
+                                                    st.info(f"✅ Created class mapping: {class_mapping}")
+                                                else:
+                                                    st.error("❌ Could not automatically map class names. Please ensure model and dataset use the same class names.")
+                                            
+                                            # Run evaluation with class mapping
                                             eval_results = evaluate_model(
                                                 all_predictions,
                                                 ground_truth,
-                                                iou_threshold=0.5
+                                                iou_threshold=0.5,
+                                                class_mapping=class_mapping if class_mapping else None
                                             )
                                             
                                             # Display overall metrics
@@ -461,6 +653,52 @@ elif main_section == "6. Model Training Evaluation":
                                                 st.metric("Total FP", overall['total_fp'])
                                             with metric_col5:
                                                 st.metric("Total FN", overall['total_fn'])
+                                            
+                                            # Calculate macro-averaged precision, recall, and F1 from per-class metrics
+                                            per_class = eval_results['per_class_metrics']
+                                            macro_precision = 0.0
+                                            macro_recall = 0.0
+                                            macro_f1 = 0.0
+                                            if per_class:
+                                                precisions = [m['precision'] for m in per_class.values()]
+                                                recalls = [m['recall'] for m in per_class.values()]
+                                                f1_scores = [m['f1_score'] for m in per_class.values()]
+                                                macro_precision = sum(precisions) / len(precisions) if precisions else 0.0
+                                                macro_recall = sum(recalls) / len(recalls) if recalls else 0.0
+                                                macro_f1 = sum(f1_scores) / len(f1_scores) if f1_scores else 0.0
+                                            
+                                            # Prepare results for database update
+                                            # Format matches expected structure: {precision, recall, f1_score, mAP50, AP5095}
+                                            db_results = {
+                                                'precision': macro_precision,
+                                                'recall': macro_recall,
+                                                'f1_score': macro_f1,
+                                                'mAP50': overall['map_50'],
+                                                'AP5095': overall['map_50_95'],
+                                                'total_tp': overall['total_tp'],
+                                                'total_fp': overall['total_fp'],
+                                                'total_fn': overall['total_fn'],
+                                                'evaluation_timestamp': datetime.now().isoformat(),
+                                                'per_class_metrics': per_class  # Store detailed per-class metrics
+                                            }
+                                            
+                                            # Update model in database with evaluation results
+                                            try:
+                                                updated_model = upsert_model(
+                                                    model_id=selected_model_id,
+                                                    model_name=selected_model.get('model_name', ''),
+                                                    weights_file_stream=None,  # Don't update weights
+                                                    results=db_results,
+                                                    is_active=selected_model.get('is_active', False)  # Preserve is_active status
+                                                )
+                                                if updated_model:
+                                                    st.success("✅ Evaluation results saved to database!")
+                                                else:
+                                                    st.warning("⚠️ Could not save evaluation results to database. Please check database connection.")
+                                            except Exception as e:
+                                                st.error(f"❌ Error saving evaluation results: {e}")
+                                                import traceback
+                                                st.code(traceback.format_exc())
                                             
                                             # Per-class metrics table
                                             st.markdown("### Per-Class Metrics")
@@ -742,70 +980,558 @@ elif main_section == "7. hCAPTCHA Demo":
                     f"Sent {summary.get('total_sent')} image(s) (canvas: {summary.get('sent_canvas')}, divs: {summary.get('sent_divs')})."
                 )
                 accepted = summary.get("accepted", []) or []
-            if accepted:
-                # Check if this is a multi-crumb challenge (multiple challenges with different challenge_ids)
-                challenge_ids = set()
-                for item in accepted:
-                    result = item.get("result", {})
-                    if isinstance(result, dict) and result.get("challenge_id"):
-                        challenge_ids.add(result.get("challenge_id"))
-                
-                is_multi_crumb = len(challenge_ids) > 1
-                
-                # Check if this is a batch result (multiple images with same result)
-                first_result = accepted[0].get("result", {}) if accepted else {}
-                is_batch = isinstance(first_result.get("results"), list) and len(first_result.get("results", [])) > 0 and isinstance(first_result.get("results", [])[0], dict) and "image_index" in first_result.get("results", [])[0]
-                
-                if is_multi_crumb:
-                    # Display multi-crumb challenge results
-                    st.markdown("### Multi-Crumb Challenge Results")
-                    st.info(f"Detected {len(challenge_ids)} separate challenge(s) from multi-crumb challenge")
-                    
-                    # Group accepted results by challenge_id
-                    challenges_by_id = {}
+                if accepted:
+                    # Check if this is a multi-crumb challenge (multiple challenges with different challenge_ids)
+                    challenge_ids = set()
                     for item in accepted:
                         result = item.get("result", {})
-                        challenge_id = result.get("challenge_id") if isinstance(result, dict) else None
-                        if challenge_id:
-                            if challenge_id not in challenges_by_id:
-                                challenges_by_id[challenge_id] = []
-                            challenges_by_id[challenge_id].append(item)
+                        if isinstance(result, dict) and result.get("challenge_id"):
+                            challenge_ids.add(result.get("challenge_id"))
                     
-                    # Display each challenge separately
-                    for challenge_idx, (challenge_id, challenge_items) in enumerate(challenges_by_id.items(), 1):
-                        st.markdown(f"#### Challenge {challenge_idx} (ID: {challenge_id})")
+                    is_multi_crumb = len(challenge_ids) > 1
+                    
+                    # Check if this is a batch result (multiple images with same result)
+                    first_result = accepted[0].get("result", {}) if accepted else {}
+                    is_batch = isinstance(first_result.get("results"), list) and len(first_result.get("results", [])) > 0 and isinstance(first_result.get("results", [])[0], dict) and "image_index" in first_result.get("results", [])[0]
+                    
+                    if is_multi_crumb:
+                        # Display multi-crumb challenge results
+                        st.markdown("### Multi-Crumb Challenge Results")
+                        st.info(f"Detected {len(challenge_ids)} separate challenge(s) from multi-crumb challenge")
                         
-                        # Process each item in this challenge
-                        for item_idx, item in enumerate(challenge_items):
+                        # Group accepted results by challenge_id
+                        challenges_by_id = {}
+                        for item in accepted:
                             result = item.get("result", {})
-                            data_url = item.get("data_url")
-                            filename = item.get("filename", f"image_{item_idx+1}.png")
+                            challenge_id = result.get("challenge_id") if isinstance(result, dict) else None
+                            if challenge_id:
+                                if challenge_id not in challenges_by_id:
+                                    challenges_by_id[challenge_id] = []
+                                challenges_by_id[challenge_id].append(item)
+                        
+                        # Display each challenge separately
+                        for challenge_idx, (challenge_id, challenge_items) in enumerate(challenges_by_id.items(), 1):
+                            st.markdown(f"#### Challenge {challenge_idx} (ID: {challenge_id})")
                             
-                            # Display image and results similar to single canvas flow
+                            # Process each item in this challenge
+                            for item_idx, item in enumerate(challenge_items):
+                                result = item.get("result", {})
+                                data_url = item.get("data_url")
+                                filename = item.get("filename", f"image_{item_idx+1}.png")
+                                
+                                # Display image and results similar to single canvas flow
+                                col1, col2 = st.columns([2, 1])
+                                
+                                with col1:
+                                    processed_img_b64 = result.get("processed_image") if isinstance(result, dict) else None
+                                    results = result.get("results", []) if isinstance(result, dict) else []
+                                    
+                                    # Always show processed image if available, otherwise fallback to data_url
+                                    display_img_b64 = None
+                                    if processed_img_b64:
+                                        display_img_b64 = processed_img_b64
+                                    elif data_url:
+                                        # Extract base64 from data_url if no processed_image
+                                        try:
+                                            b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
+                                            display_img_b64 = b64_part
+                                        except:
+                                            pass
+                                    
+                                    if display_img_b64:
+                                        try:
+                                            img_bytes = base64.b64decode(display_img_b64)
+                                            img = Image.open(io.BytesIO(img_bytes))
+                                            
+                                            # Draw bounding boxes if there are valid detections
+                                            valid_detections = []
+                                            if results and isinstance(results, list) and len(results) > 0:
+                                                # Filter for valid detections (must have bbox with 4 elements)
+                                                valid_detections = [
+                                                    r for r in results 
+                                                    if isinstance(r, dict) 
+                                                    and 'error' not in r 
+                                                    and 'bbox' in r 
+                                                    and isinstance(r.get('bbox'), (list, tuple))
+                                                    and len(r.get('bbox', [])) >= 4
+                                                    and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                                ]
+                                                
+                                                if valid_detections:
+                                                    draw = ImageDraw.Draw(img)
+                                                    try:
+                                                        font = ImageFont.truetype("arial.ttf", 16)
+                                                    except:
+                                                        try:
+                                                            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
+                                                        except:
+                                                            font = ImageFont.load_default()
+                                                    
+                                                    for result_item in valid_detections:
+                                                        bbox = result_item.get('bbox', [])
+                                                        if len(bbox) >= 4:
+                                                            x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                                                            draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+                                                            class_name = result_item.get('class', 'Unknown')
+                                                            confidence = result_item.get('confidence', 0.0)
+                                                            label = f"{class_name}: {confidence:.2f}"
+                                                            bbox_text = draw.textbbox((0, 0), label, font=font)
+                                                            text_width = bbox_text[2] - bbox_text[0]
+                                                            text_height = bbox_text[3] - bbox_text[1]
+                                                            draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
+                                                            draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
+                                            
+                                            # Always display the image (with or without detections)
+                                            if valid_detections:
+                                                st.image(img, caption=f"{filename} (Challenge {challenge_idx}) - With Detections", width='stretch')
+                                            else:
+                                                st.image(img, caption=f"{filename} (Challenge {challenge_idx}) - No Detections", width='stretch')
+                                        except Exception as e:
+                                            st.error(f"Failed to display image: {e}")
+                                    else:
+                                        # Fallback: try to display from data_url if no processed_image
+                                        if data_url:
+                                            try:
+                                                b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
+                                                img_bytes = base64.b64decode(b64_part)
+                                                st.image(img_bytes, caption=f"{filename} (Challenge {challenge_idx}) - Original Image", width='stretch')
+                                            except Exception:
+                                                st.write(f"{filename} (Challenge {challenge_idx})")
+                                        else:
+                                            st.warning(f"No image data available for {filename}")
+                                
+                                with col2:
+                                    if isinstance(result, dict):
+                                        preprocess = result.get("preprocess")
+                                        if preprocess:
+                                            st.info(f"**Preprocessing:** {preprocess.get('preprocess_id', 'N/A')}")
+                                        
+                                        postprocess = result.get("postprocess")
+                                        if postprocess:
+                                            steps = postprocess.get('steps', {})
+                                            conf_thresh = steps.get('confidence_threshold', 'N/A')
+                                            iou_thresh = steps.get('iou_threshold', 'N/A')
+                                            st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
+                                            st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                        
+                                        if 'perform_time' in result:
+                                            st.metric("Processing Time", f"{result.get('perform_time', 0):.3f}s")
+                                        
+                                        if 'challenge_id' in result:
+                                            st.caption(f"**Challenge ID:** {result.get('challenge_id')}")
+                                        
+                                        if 'error' in result:
+                                            st.error(f"**Error:** {result.get('error')}")
+                                            st.caption("X Inference NOT saved (errors are not stored)")
+                                        elif results:
+                                            if isinstance(results, list):
+                                                # Filter for valid detections
+                                                valid_detections = [
+                                                    r for r in results 
+                                                    if isinstance(r, dict) 
+                                                    and 'error' not in r 
+                                                    and 'bbox' in r 
+                                                    and isinstance(r.get('bbox'), (list, tuple))
+                                                    and len(r.get('bbox', [])) >= 4
+                                                    and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                                ]
+                                                
+                                                if len(valid_detections) > 0:
+                                                    st.success(f"**Detections:** {len(valid_detections)} objects")
+                                                    st.caption("/ Inference saved to database")
+                                                else:
+                                                    if len(results) > 0:
+                                                        st.info(f"**No valid detections found** ({len(results)} invalid result(s))")
+                                                    else:
+                                                        st.info("**No detections found**")
+                                                    st.caption("/ Inference saved to database")
+                                            else:
+                                                st.info("**No detections found**")
+                                                st.caption("/ Inference saved to database")
+                                        else:
+                                            st.info("**No detections found**")
+                                            st.caption("/ Inference saved to database")
+                                
+                                # Display results table only if there are valid detections
+                                valid_detections_for_table = []
+                                if results and isinstance(results, list) and len(results) > 0:
+                                    valid_detections_for_table = [
+                                        r for r in results 
+                                        if isinstance(r, dict) 
+                                        and 'error' not in r 
+                                        and 'bbox' in r 
+                                        and isinstance(r.get('bbox'), (list, tuple))
+                                        and len(r.get('bbox', [])) >= 4
+                                        and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                    ]
+                                
+                                if valid_detections_for_table and len(valid_detections_for_table) > 0:
+                                    st.markdown(f"**Detection Results for {filename}:**")
+                                    table_data = []
+                                    for result_idx, result_item in enumerate(valid_detections_for_table):
+                                        bbox = result_item.get('bbox', [])
+                                        bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]" if len(bbox) >= 4 else "N/A"
+                                        table_data.append({
+                                            "ID": result_idx + 1,
+                                            "Class": result_item.get('class', 'Unknown'),
+                                            "Confidence": f"{result_item.get('confidence', 0.0):.4f}",
+                                            "Bounding Box": bbox_str,
+                                            "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
+                                        })
+                                    if table_data:
+                                        st.dataframe(table_data, width='stretch')
+                                else:
+                                    # Show clear message when no detections found
+                                    if results and isinstance(results, list) and len(results) > 0:
+                                        st.info(f"**No valid detections found for {filename}** ({len(results)} invalid result(s))")
+                                    else:
+                                        st.info(f"**No detections found for {filename}**")
+                                
+                                if item_idx < len(challenge_items) - 1:
+                                    st.markdown("---")
+                            
+                            if challenge_idx < len(challenges_by_id):
+                                st.markdown("---")
+                                st.markdown("---")
+                    
+                    elif is_batch:
+                        # Display batch results similar to upload-API
+                        st.markdown("### Batch Inference Results")
+                        
+                        # Display summary metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Images Processed", len(accepted))
+                        with col2:
+                            if isinstance(first_result, dict) and 'perform_time' in first_result:
+                                st.metric("Processing Time", f"{first_result.get('perform_time', 0):.3f}s")
+                        with col3:
+                            if isinstance(first_result, dict) and 'challenge_id' in first_result:
+                                st.metric("Challenge ID", first_result.get('challenge_id', 'N/A'))
+                        
+                        # Display preprocessing/postprocessing info
+                        if isinstance(first_result, dict):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                preprocess = first_result.get('preprocess')
+                                if preprocess:
+                                    st.info(f"**Preprocessing:** {preprocess.get('preprocess_id', 'N/A')}")
+                                    if preprocess.get('name'):
+                                        st.caption(f"Name: {preprocess.get('name')}")
+                            
+                            with col2:
+                                postprocess = first_result.get('postprocess')
+                                if postprocess:
+                                    steps = postprocess.get('steps', {})
+                                    conf_thresh = steps.get('confidence_threshold', 'N/A')
+                                    iou_thresh = steps.get('iou_threshold', 'N/A')
+                                    st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
+                                    st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                        
+                        # Display each image with results
+                        # For batch results, the 'results' field contains an array of batch items
+                        # Each batch item has: {image_index, image_name, results: [detections]}
+                        batch_results = first_result.get('results', []) if isinstance(first_result, dict) else []
+                        processed_images = first_result.get('processed_images', []) if isinstance(first_result, dict) else []
+                        
+                        # Debug: Log batch results structure
+                        print(f"Debug: batch_results type={type(batch_results)}, length={len(batch_results) if isinstance(batch_results, list) else 'N/A'}")
+                        if batch_results and len(batch_results) > 0:
+                            print(f"Debug: First batch item keys: {list(batch_results[0].keys()) if isinstance(batch_results[0], dict) else 'N/A'}")
+                            if isinstance(batch_results[0], dict):
+                                print(f"Debug: First batch item image_index: {batch_results[0].get('image_index')}")
+                                print(f"Debug: First batch item results type: {type(batch_results[0].get('results'))}, length={len(batch_results[0].get('results', [])) if isinstance(batch_results[0].get('results'), list) else 'N/A'}")
+                        
+                        # Create a mapping from image_index to batch result for easier lookup
+                        batch_results_by_index = {}
+                        for batch_item in batch_results:
+                            if isinstance(batch_item, dict) and 'image_index' in batch_item:
+                                batch_results_by_index[batch_item['image_index']] = batch_item
+                        
+                        print(f"Debug: batch_results_by_index keys: {list(batch_results_by_index.keys())}")
+                        
+                        # Detect if first item is a sample tile (sent separately, not in batch)
+                        has_sample_tile = False
+                        if len(accepted) == len(batch_results) + 1 and len(accepted) > 0:
+                            first_item_result = accepted[0].get("result", {})
+                            if isinstance(first_item_result, dict):
+                                first_results = first_item_result.get('results', [])
+                                if isinstance(first_results, list) and len(first_results) > 0:
+                                    if not isinstance(first_results[0], dict) or 'image_index' not in first_results[0]:
+                                        has_sample_tile = True
+                                elif isinstance(first_item_result, dict) and 'processed_image' in first_item_result:
+                                    has_sample_tile = True
+                        
+                        sample_offset = 1 if has_sample_tile else 0
+                        
+                        for img_idx, item in enumerate(accepted):
+                            data_url = item.get("data_url")
+                            result = item.get("result", {})
+                            filename = item.get("filename", f"image_{img_idx+1}.png")
+                            
+                            if has_sample_tile and img_idx == 0:
+                                image_result_data = None
+                            else:
+                                batch_idx = img_idx - sample_offset
+                                image_index = batch_idx + 1
+                                # Try to get result by image_index first
+                                # Note: image_index in API is 1-based (1, 2, 3, ...)
+                                image_result_data = batch_results_by_index.get(image_index)
+                                
+                                # Fallback: try by batch index if not found by image_index
+                                if image_result_data is None and batch_idx >= 0 and batch_idx < len(batch_results):
+                                    image_result_data = batch_results[batch_idx]
+                                    print(f"Debug: Using fallback - found result by batch_idx={batch_idx} for image_index={image_index}")
+                                
+                                # Debug: Log result retrieval
+                                if image_result_data:
+                                    img_res = image_result_data.get('results', [])
+                                    print(f"Debug: Found image_result_data for {filename}: image_index={image_result_data.get('image_index')}, results type={type(img_res)}, results length={len(img_res) if isinstance(img_res, list) else 'N/A'}")
+                                    if isinstance(img_res, list) and len(img_res) > 0:
+                                        print(f"Debug: First result keys: {list(img_res[0].keys()) if isinstance(img_res[0], dict) else 'N/A'}")
+                                        if isinstance(img_res[0], dict) and 'bbox' in img_res[0]:
+                                            print(f"Debug: First result bbox: {img_res[0].get('bbox')}, bbox type: {type(img_res[0].get('bbox'))}, bbox length: {len(img_res[0].get('bbox', [])) if isinstance(img_res[0].get('bbox'), (list, tuple)) else 'N/A'}")
+                                else:
+                                    print(f"Debug: Could not find result for img_idx={img_idx}, batch_idx={batch_idx}, image_index={image_index}")
+                                    print(f"Debug: batch_results_by_index keys: {list(batch_results_by_index.keys())}")
+                                    print(f"Debug: batch_results length: {len(batch_results)}")
+                                    if batch_results and len(batch_results) > 0:
+                                        print(f"Debug: First batch result keys: {list(batch_results[0].keys()) if isinstance(batch_results[0], dict) else 'N/A'}")
+                                        if isinstance(batch_results[0], dict):
+                                            print(f"Debug: First batch result image_index: {batch_results[0].get('image_index')}")
+                            
+                            st.markdown(f"#### {filename}")
+                            
+                            col1, col2 = st.columns([2, 1])
+                            
+                            with col1:
+                                display_img_b64 = None
+                                if has_sample_tile and img_idx == 0:
+                                    # For sample tile, prefer processed_image, fallback to data_url
+                                    if isinstance(result, dict) and result.get('processed_image'):
+                                        display_img_b64 = result.get('processed_image')
+                                    elif data_url:
+                                        # Extract base64 from data_url if no processed_image
+                                        try:
+                                            b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
+                                            display_img_b64 = b64_part
+                                        except:
+                                            pass
+                                elif processed_images:
+                                    batch_img_idx = img_idx - sample_offset
+                                    if batch_img_idx >= 0 and batch_img_idx < len(processed_images):
+                                        display_img_b64 = processed_images[batch_img_idx]
+                                
+                                if display_img_b64:
+                                    try:
+                                        img_bytes = base64.b64decode(display_img_b64)
+                                        img = Image.open(io.BytesIO(img_bytes))
+                                        
+                                        results_to_draw = None
+                                        if has_sample_tile and img_idx == 0:
+                                            results_to_draw = result.get('results', []) if isinstance(result, dict) else []
+                                        elif image_result_data:
+                                            results_to_draw = image_result_data.get('results', [])
+                                        
+                                        if results_to_draw and isinstance(results_to_draw, list) and len(results_to_draw) > 0:
+                                            valid_detections = [r for r in results_to_draw if isinstance(r, dict) and 'error' not in r and 'bbox' in r and len(r.get('bbox', [])) >= 4]
+                                            if valid_detections:
+                                                draw = ImageDraw.Draw(img)
+                                                try:
+                                                    font = ImageFont.truetype("arial.ttf", 16)
+                                                except:
+                                                    try:
+                                                        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
+                                                    except:
+                                                        font = ImageFont.load_default()
+                                                
+                                                for det_result in valid_detections:
+                                                    bbox = det_result.get('bbox', [])
+                                                    if len(bbox) >= 4:
+                                                        x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                                                        draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+                                                        class_name = det_result.get('class', 'Unknown')
+                                                        confidence = det_result.get('confidence', 0.0)
+                                                        label = f"{class_name}: {confidence:.2f}"
+                                                        bbox_text = draw.textbbox((0, 0), label, font=font)
+                                                        text_width = bbox_text[2] - bbox_text[0]
+                                                        text_height = bbox_text[3] - bbox_text[1]
+                                                        draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
+                                                        draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
+                                        
+                                        st.image(img, caption=f"{filename} (with detections)", width='stretch')
+                                    except Exception as e:
+                                        st.error(f"Failed to display image: {e}")
+                                else:
+                                    if data_url:
+                                        try:
+                                            b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
+                                            img_bytes = base64.b64decode(b64_part)
+                                            st.image(img_bytes, caption=f"{filename}", width='stretch')
+                                        except Exception:
+                                            st.write(f"{filename}")
+                            
+                            with col2:
+                                display_result = None
+                                if has_sample_tile and img_idx == 0:
+                                    display_result = result
+                                elif image_result_data:
+                                    display_result = image_result_data
+                                
+                                if display_result:
+                                    img_results = display_result.get('results', [])
+                                    if isinstance(img_results, dict) and 'error' in img_results:
+                                        st.error(f"**Error:** {img_results.get('error')}")
+                                        st.caption("X Inference NOT saved (errors are not stored)")
+                                    elif isinstance(img_results, list):
+                                        if len(img_results) > 0:
+                                            st.success(f"**Detections:** {len(img_results)} objects")
+                                        else:
+                                            st.info("No detections found")
+                                        st.caption("/ Inference saved to database")
+                                    else:
+                                        st.info("No detections found")
+                                        st.caption("/ Inference saved to database")
+                                else:
+                                    st.warning("No result data available for this image")
+                                
+                                if isinstance(result, dict) and result.get('model'):
+                                    model = result.get('model', {})
+                                    st.caption(f"**Model:** {model.get('model_name', 'Unknown')}")
+                                
+                                table_display_result = None
+                                if has_sample_tile and img_idx == 0:
+                                    # For sample tile, use the result directly (single image API response)
+                                    table_display_result = result
+                                elif image_result_data:
+                                    # For batch tiles, use the individual image result from batch
+                                    table_display_result = image_result_data
+                                
+                                if table_display_result:
+                                    # Extract results from the appropriate structure
+                                    # For batch items: table_display_result is {image_index, image_name, results: [detections]}
+                                    # For single image: table_display_result is {results: [detections], ...}
+                                    img_results = table_display_result.get('results', [])
+                                    
+                                    # Debug: Log the results structure
+                                    print(f"Debug: table_display_result for {filename}: type={type(img_results)}, length={len(img_results) if isinstance(img_results, list) else 'N/A'}")
+                                    if isinstance(img_results, list) and len(img_results) > 0:
+                                        print(f"Debug: First result item type: {type(img_results[0])}, keys: {list(img_results[0].keys()) if isinstance(img_results[0], dict) else 'N/A'}")
+                                    
+                                    if isinstance(img_results, list):
+                                        if len(img_results) > 0:
+                                            # Filter for valid detections (must have bbox with 4 elements)
+                                            # Only include detections that have a valid bbox with at least 4 elements
+                                            valid_detections = [
+                                                r for r in img_results 
+                                                if isinstance(r, dict) 
+                                                and 'error' not in r 
+                                                and 'bbox' in r 
+                                                and isinstance(r.get('bbox'), (list, tuple))
+                                                and len(r.get('bbox', [])) >= 4
+                                                and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                            ]
+                                            
+                                            if valid_detections:
+                                                st.markdown(f"**Detection Results for {filename}:**")
+                                                table_data = []
+                                                for det_idx, det_result in enumerate(valid_detections):
+                                                    bbox = det_result.get('bbox', [])
+                                                    bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]" if len(bbox) >= 4 else "N/A"
+                                                    table_data.append({
+                                                        "ID": det_idx + 1,
+                                                        "Class": det_result.get('class', 'Unknown'),
+                                                        "Confidence": f"{det_result.get('confidence', 0.0):.4f}",
+                                                        "Bounding Box": bbox_str,
+                                                        "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
+                                                    })
+                                                if table_data:
+                                                    st.dataframe(table_data, width='stretch')
+                                            else:
+                                                # No valid detections - check if there are any results at all
+                                                if len(img_results) > 0:
+                                                    # There are results but they're invalid - show message
+                                                    st.info(f"No valid detections for {filename} ({len(img_results)} invalid result(s))")
+                                                else:
+                                                    # Empty results - no detections
+                                                    st.info(f"No detections found for {filename}")
+                                        else:
+                                            # Empty list - no detections
+                                            st.info(f"No detections found for {filename}")
+                                    elif isinstance(img_results, dict):
+                                        if 'error' in img_results:
+                                            st.error(f"Error: {img_results.get('error')}")
+                                        elif 'message' in img_results:
+                                            st.info(f"Message: {img_results.get('message')}")
+                                        else:
+                                            st.warning(f"Unexpected result format for {filename}")
+                                    else:
+                                        st.info(f"No detections found for {filename} (results type: {type(img_results)})")
+                                else:
+                                    st.info(f"No result data available for {filename}")
+                            
+                            st.markdown("---")
+                        
+                        with st.expander("View Full Response"):
+                            st.json(first_result)
+                
+                    else:
+                        # Display single canvas results
+                        for idx, item in enumerate(accepted):
+                            data_url = item.get("data_url")
+                            result = item.get("result", {})
+                            filename = item.get("filename", f"image_{idx+1}.png")
+                            
+                            st.markdown(f"### {filename}")
+                            
                             col1, col2 = st.columns([2, 1])
                             
                             with col1:
                                 processed_img_b64 = result.get("processed_image") if isinstance(result, dict) else None
                                 results = result.get("results", []) if isinstance(result, dict) else []
                                 
+                                # Always show processed image if available, otherwise fallback to data_url
+                                display_img_b64 = None
                                 if processed_img_b64:
+                                    display_img_b64 = processed_img_b64
+                                elif data_url:
+                                    # Extract base64 from data_url if no processed_image
                                     try:
-                                        img_bytes = base64.b64decode(processed_img_b64)
+                                        b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
+                                        display_img_b64 = b64_part
+                                    except:
+                                        pass
+                                
+                                if display_img_b64:
+                                    try:
+                                        img_bytes = base64.b64decode(display_img_b64)
                                         img = Image.open(io.BytesIO(img_bytes))
                                         
-                                        # Draw bounding boxes
-                                        if results and isinstance(results, list):
-                                            draw = ImageDraw.Draw(img)
-                                            try:
-                                                font = ImageFont.truetype("arial.ttf", 16)
-                                            except:
-                                                try:
-                                                    font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
-                                                except:
-                                                    font = ImageFont.load_default()
+                                        # Draw bounding boxes if there are valid detections
+                                        valid_detections = []
+                                        if results and isinstance(results, list) and len(results) > 0:
+                                            # Filter for valid detections (must have bbox with 4 elements)
+                                            valid_detections = [
+                                                r for r in results 
+                                                if isinstance(r, dict) 
+                                                and 'error' not in r 
+                                                and 'bbox' in r 
+                                                and isinstance(r.get('bbox'), (list, tuple))
+                                                and len(r.get('bbox', [])) >= 4
+                                                and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                            ]
                                             
-                                            for result_item in results:
-                                                if isinstance(result_item, dict) and 'error' not in result_item:
+                                            if valid_detections:
+                                                draw = ImageDraw.Draw(img)
+                                                try:
+                                                    font = ImageFont.truetype("arial.ttf", 16)
+                                                except:
+                                                    try:
+                                                        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
+                                                    except:
+                                                        font = ImageFont.load_default()
+                                                
+                                                for result_item in valid_detections:
                                                     bbox = result_item.get('bbox', [])
                                                     if len(bbox) >= 4:
                                                         x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
@@ -819,22 +1545,29 @@ elif main_section == "7. hCAPTCHA Demo":
                                                         draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                         draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                         
-                                            st.image(img, caption=f"{filename} (Challenge {challenge_idx})", width='stretch')
+                                        # Always display the image (with or without detections)
+                                        if valid_detections:
+                                            st.image(img, caption="Processed Image with Detections", width='stretch')
+                                        else:
+                                            st.image(img, caption="Processed Image (No Detections)", width='stretch')
                                     except Exception as e:
                                         st.error(f"Failed to display image: {e}")
-                                elif data_url:
-                                    try:
-                                        b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
-                                        img_bytes = base64.b64decode(b64_part)
-                                        st.image(img_bytes, caption=f"{filename}", width='stretch')
-                                    except Exception:
-                                        st.write(f"{filename}")
+                                else:
+                                    if data_url:
+                                        try:
+                                            b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
+                                            img_bytes = base64.b64decode(b64_part)
+                                            st.image(img_bytes, caption=f"{filename}", width='stretch')
+                                        except Exception:
+                                            st.write(f"{filename}")
                             
                             with col2:
                                 if isinstance(result, dict):
                                     preprocess = result.get("preprocess")
                                     if preprocess:
                                         st.info(f"**Preprocessing:** {preprocess.get('preprocess_id', 'N/A')}")
+                                        if preprocess.get('applied_steps'):
+                                            st.caption(f"Steps: {', '.join([step.get('operation', '') for step in preprocess.get('applied_steps', [])])}")
                                     
                                     postprocess = result.get("postprocess")
                                     if postprocess:
@@ -852,337 +1585,56 @@ elif main_section == "7. hCAPTCHA Demo":
                                     
                                     if 'error' in result:
                                         st.error(f"**Error:** {result.get('error')}")
+                                        st.caption("X Inference NOT saved (errors are not stored)")
                                     elif results:
-                                        if isinstance(results, list) and len(results) > 0:
-                                            st.success(f"**Detections:** {len(results)} objects")
+                                        if isinstance(results, list):
+                                            # Filter for valid detections
+                                            valid_detections = [
+                                                r for r in results 
+                                                if isinstance(r, dict) 
+                                                and 'error' not in r 
+                                                and 'bbox' in r 
+                                                and isinstance(r.get('bbox'), (list, tuple))
+                                                and len(r.get('bbox', [])) >= 4
+                                                and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                            ]
+                                            
+                                            if len(valid_detections) > 0:
+                                                st.success(f"**Detections:** {len(valid_detections)} objects")
+                                                st.caption("/ Inference saved to database")
+                                            else:
+                                                if len(results) > 0:
+                                                    st.info(f"**No valid detections found** ({len(results)} invalid result(s))")
+                                                else:
+                                                    st.info("**No detections found**")
+                                                st.caption("/ Inference saved to database")
+                                        elif isinstance(results, dict) and 'message' in results:
+                                            st.info(f"**Message:** {results.get('message')}")
+                                            st.caption("/ Inference saved to database")
                                         else:
-                                            st.info("No detections found")
+                                            st.info("**No detections found**")
+                                            st.caption("/ Inference saved to database")
+                                    else:
+                                        st.info("**No detections found**")
+                                        st.caption("/ Inference saved to database")
                             
-                            # Display results table
+                            # Display results table only if there are valid detections
+                            valid_detections_for_table = []
                             if results and isinstance(results, list) and len(results) > 0:
-                                st.markdown(f"**Detection Results for {filename}:**")
+                                valid_detections_for_table = [
+                                    r for r in results 
+                                    if isinstance(r, dict) 
+                                    and 'error' not in r 
+                                    and 'bbox' in r 
+                                    and isinstance(r.get('bbox'), (list, tuple))
+                                    and len(r.get('bbox', [])) >= 4
+                                    and all(isinstance(x, (int, float)) for x in r.get('bbox', [])[:4])
+                                ]
+                            
+                            if valid_detections_for_table and len(valid_detections_for_table) > 0:
+                                st.markdown("### Detection Results")
                                 table_data = []
-                                for result_idx, result_item in enumerate(results):
-                                    if isinstance(result_item, dict) and 'error' not in result_item:
-                                        bbox = result_item.get('bbox', [])
-                                        bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]" if len(bbox) >= 4 else "N/A"
-                                        table_data.append({
-                                            "ID": result_idx + 1,
-                                            "Class": result_item.get('class', 'Unknown'),
-                                            "Confidence": f"{result_item.get('confidence', 0.0):.4f}",
-                                            "Bounding Box": bbox_str,
-                                            "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
-                                        })
-                                if table_data:
-                                        st.dataframe(table_data, width='stretch')
-                            
-                            if item_idx < len(challenge_items) - 1:
-                                st.markdown("---")
-                        
-                        if challenge_idx < len(challenges_by_id):
-                            st.markdown("---")
-                            st.markdown("---")
-                
-                elif is_batch:
-                    # Display batch results similar to upload-API
-                    st.markdown("### Batch Inference Results")
-                    
-                    # Display summary metrics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Images Processed", len(accepted))
-                    with col2:
-                        if isinstance(first_result, dict) and 'perform_time' in first_result:
-                            st.metric("Processing Time", f"{first_result.get('perform_time', 0):.3f}s")
-                    with col3:
-                        if isinstance(first_result, dict) and 'challenge_id' in first_result:
-                            st.metric("Challenge ID", first_result.get('challenge_id', 'N/A'))
-                    
-                    # Display preprocessing/postprocessing info
-                    if isinstance(first_result, dict):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            preprocess = first_result.get('preprocess')
-                            if preprocess:
-                                st.info(f"**Preprocessing:** {preprocess.get('preprocess_id', 'N/A')}")
-                                if preprocess.get('name'):
-                                    st.caption(f"Name: {preprocess.get('name')}")
-                        
-                        with col2:
-                            postprocess = first_result.get('postprocess')
-                            if postprocess:
-                                steps = postprocess.get('steps', {})
-                                conf_thresh = steps.get('confidence_threshold', 'N/A')
-                                iou_thresh = steps.get('iou_threshold', 'N/A')
-                                st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
-                    
-                    # Display each image with results
-                    batch_results = first_result.get('results', []) if isinstance(first_result, dict) else []
-                    processed_images = first_result.get('processed_images', []) if isinstance(first_result, dict) else []
-                    
-                    # Create a mapping from image_index to batch result for easier lookup
-                    batch_results_by_index = {}
-                    for batch_item in batch_results:
-                        if isinstance(batch_item, dict) and 'image_index' in batch_item:
-                            batch_results_by_index[batch_item['image_index']] = batch_item
-                    
-                    # Detect if first item is a sample tile (sent separately, not in batch)
-                    has_sample_tile = False
-                    if len(accepted) == len(batch_results) + 1 and len(accepted) > 0:
-                        first_item_result = accepted[0].get("result", {})
-                        if isinstance(first_item_result, dict):
-                            first_results = first_item_result.get('results', [])
-                            if isinstance(first_results, list) and len(first_results) > 0:
-                                if not isinstance(first_results[0], dict) or 'image_index' not in first_results[0]:
-                                    has_sample_tile = True
-                            elif isinstance(first_item_result, dict) and 'processed_image' in first_item_result:
-                                has_sample_tile = True
-                    
-                    sample_offset = 1 if has_sample_tile else 0
-                    
-                    for img_idx, item in enumerate(accepted):
-                        data_url = item.get("data_url")
-                        result = item.get("result", {})
-                        filename = item.get("filename", f"image_{img_idx+1}.png")
-                        
-                        if has_sample_tile and img_idx == 0:
-                            image_result_data = None
-                        else:
-                            batch_idx = img_idx - sample_offset
-                            image_index = batch_idx + 1
-                            image_result_data = batch_results_by_index.get(image_index)
-                            if image_result_data is None and batch_idx >= 0 and batch_idx < len(batch_results):
-                                image_result_data = batch_results[batch_idx]
-                        
-                        st.markdown(f"#### {filename}")
-                        
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            display_img_b64 = None
-                            if has_sample_tile and img_idx == 0:
-                                if isinstance(result, dict) and result.get('processed_image'):
-                                    display_img_b64 = result.get('processed_image')
-                            elif processed_images:
-                                batch_img_idx = img_idx - sample_offset
-                                if batch_img_idx >= 0 and batch_img_idx < len(processed_images):
-                                    display_img_b64 = processed_images[batch_img_idx]
-                            
-                            if display_img_b64:
-                                    try:
-                                        img_bytes = base64.b64decode(display_img_b64)
-                                        img = Image.open(io.BytesIO(img_bytes))
-                                        
-                                        results_to_draw = None
-                                        if has_sample_tile and img_idx == 0:
-                                            results_to_draw = result.get('results', []) if isinstance(result, dict) else []
-                                        elif image_result_data:
-                                            results_to_draw = image_result_data.get('results', [])
-                                        
-                                        if results_to_draw and isinstance(results_to_draw, list) and len(results_to_draw) > 0:
-                                            valid_detections = [r for r in results_to_draw if isinstance(r, dict) and 'error' not in r and 'bbox' in r and len(r.get('bbox', [])) >= 4]
-                                            if valid_detections:
-                                                    draw = ImageDraw.Draw(img)
-                                                    try:
-                                                        font = ImageFont.truetype("arial.ttf", 16)
-                                                    except:
-                                                        try:
-                                                            font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
-                                                        except:
-                                                            font = ImageFont.load_default()
-                                                    
-                                                    for det_result in valid_detections:
-                                                        bbox = det_result.get('bbox', [])
-                                                        if len(bbox) >= 4:
-                                                            x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
-                                                            draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
-                                                            class_name = det_result.get('class', 'Unknown')
-                                                            confidence = det_result.get('confidence', 0.0)
-                                                            label = f"{class_name}: {confidence:.2f}"
-                                                            bbox_text = draw.textbbox((0, 0), label, font=font)
-                                                            text_width = bbox_text[2] - bbox_text[0]
-                                                            text_height = bbox_text[3] - bbox_text[1]
-                                                            draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
-                                                            draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
-                                        
-                                        st.image(img, caption=f"{filename} (with detections)", width='stretch')
-                                    except Exception as e:
-                                        st.error(f"Failed to display image: {e}")
-                            else:
-                                if data_url:
-                                    try:
-                                        b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
-                                        img_bytes = base64.b64decode(b64_part)
-                                        st.image(img_bytes, caption=f"{filename}", width='stretch')
-                                    except Exception:
-                                        st.write(f"{filename}")
-                        
-                        with col2:
-                            display_result = None
-                            if has_sample_tile and img_idx == 0:
-                                display_result = result
-                            elif image_result_data:
-                                display_result = image_result_data
-                            
-                            if display_result:
-                                img_results = display_result.get('results', [])
-                                if isinstance(img_results, dict) and 'error' in img_results:
-                                    st.error(f"**Error:** {img_results.get('error')}")
-                                    st.caption("X Inference NOT saved (errors are not stored)")
-                                elif isinstance(img_results, list):
-                                    if len(img_results) > 0:
-                                        st.success(f"**Detections:** {len(img_results)} objects")
-                                    else:
-                                        st.info("No detections found")
-                                    st.caption("/ Inference saved to database")
-                                else:
-                                    st.info("No detections found")
-                                    st.caption("/ Inference saved to database")
-                            else:
-                                st.warning("No result data available for this image")
-                            
-                            if isinstance(result, dict) and result.get('model'):
-                                model = result.get('model', {})
-                                st.caption(f"**Model:** {model.get('model_name', 'Unknown')}")
-                        
-                            table_display_result = None
-                            if has_sample_tile and img_idx == 0:
-                                table_display_result = result
-                            elif image_result_data:
-                                table_display_result = image_result_data
-                            
-                            if table_display_result:
-                                img_results = table_display_result.get('results', [])
-                                if isinstance(img_results, list) and len(img_results) > 0:
-                                    valid_detections = [r for r in img_results if isinstance(r, dict) and 'error' not in r and 'bbox' in r]
-                                    if valid_detections:
-                                        st.markdown(f"**Detection Results for {filename}:**")
-                                        table_data = []
-                                        for det_idx, det_result in enumerate(valid_detections):
-                                            bbox = det_result.get('bbox', [])
-                                            bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]" if len(bbox) >= 4 else "N/A"
-                                            table_data.append({
-                                                "ID": det_idx + 1,
-                                                "Class": det_result.get('class', 'Unknown'),
-                                                "Confidence": f"{det_result.get('confidence', 0.0):.4f}",
-                                                "Bounding Box": bbox_str,
-                                                "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
-                                            })
-                                        if table_data:
-                                            st.dataframe(table_data, width='stretch')
-                                    else:
-                                        st.info(f"No valid detections for {filename}")
-                                elif isinstance(img_results, dict) and 'error' in img_results:
-                                    st.error(f"Error: {img_results.get('error')}")
-                                else:
-                                    st.info(f"No detections found for {filename}")
-                            else:
-                                st.info(f"No result data available for {filename}")
-                        
-                        st.markdown("---")
-                    
-                    with st.expander("View Full Response"):
-                        st.json(first_result)
-                
-                else:
-                    # Display single canvas results
-                    for idx, item in enumerate(accepted):
-                        data_url = item.get("data_url")
-                        result = item.get("result", {})
-                        filename = item.get("filename", f"image_{idx+1}.png")
-                        
-                        st.markdown(f"### {filename}")
-                        
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            processed_img_b64 = result.get("processed_image") if isinstance(result, dict) else None
-                            results = result.get("results", []) if isinstance(result, dict) else []
-                            
-                            if processed_img_b64:
-                                try:
-                                    img_bytes = base64.b64decode(processed_img_b64)
-                                    img = Image.open(io.BytesIO(img_bytes))
-                                    
-                                    if results and isinstance(results, list):
-                                        draw = ImageDraw.Draw(img)
-                                        try:
-                                            font = ImageFont.truetype("arial.ttf", 16)
-                                        except:
-                                            try:
-                                                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
-                                            except:
-                                                font = ImageFont.load_default()
-                                        
-                                        for result_item in results:
-                                            if isinstance(result_item, dict) and 'error' not in result_item:
-                                                bbox = result_item.get('bbox', [])
-                                                if len(bbox) >= 4:
-                                                    x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
-                                                    draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
-                                                    class_name = result_item.get('class', 'Unknown')
-                                                    confidence = result_item.get('confidence', 0.0)
-                                                    label = f"{class_name}: {confidence:.2f}"
-                                                    bbox_text = draw.textbbox((0, 0), label, font=font)
-                                                    text_width = bbox_text[2] - bbox_text[0]
-                                                    text_height = bbox_text[3] - bbox_text[1]
-                                                    draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
-                                                    draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
-                                    
-                                        st.image(img, caption="Processed Image with Detections", width='stretch')
-                                except Exception as e:
-                                    st.error(f"Failed to display image: {e}")
-                            else:
-                                if data_url:
-                                    try:
-                                        b64_part = data_url.split(",", 1)[1] if "," in data_url else data_url
-                                        img_bytes = base64.b64decode(b64_part)
-                                        st.image(img_bytes, caption=f"{filename}", width='stretch')
-                                    except Exception:
-                                        st.write(f"{filename}")
-                        
-                        with col2:
-                            if isinstance(result, dict):
-                                preprocess = result.get("preprocess")
-                                if preprocess:
-                                    st.info(f"**Preprocessing:** {preprocess.get('preprocess_id', 'N/A')}")
-                                    if preprocess.get('applied_steps'):
-                                        st.caption(f"Steps: {', '.join([step.get('operation', '') for step in preprocess.get('applied_steps', [])])}")
-                                
-                                postprocess = result.get("postprocess")
-                                if postprocess:
-                                    steps = postprocess.get('steps', {})
-                                    conf_thresh = steps.get('confidence_threshold', 'N/A')
-                                    iou_thresh = steps.get('iou_threshold', 'N/A')
-                                    st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                                    st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
-                                
-                                if 'perform_time' in result:
-                                    st.metric("Processing Time", f"{result.get('perform_time', 0):.3f}s")
-                                
-                                if 'challenge_id' in result:
-                                    st.caption(f"**Challenge ID:** {result.get('challenge_id')}")
-                                
-                                if 'error' in result:
-                                    st.error(f"**Error:** {result.get('error')}")
-                                    st.caption("X Inference NOT saved (errors are not stored)")
-                                elif results:
-                                    if isinstance(results, list) and len(results) > 0:
-                                        st.success(f"**Detections:** {len(results)} objects")
-                                        st.caption("/ Inference saved to database")
-                                    elif isinstance(results, dict) and 'message' in results:
-                                        st.info(f"**Message:** {results.get('message')}")
-                                        st.caption("/ Inference saved to database")
-                                    else:
-                                        st.info("No detections found")
-                                        st.caption("/ Inference saved to database")
-                        
-                        if results and isinstance(results, list) and len(results) > 0:
-                            st.markdown("### Detection Results")
-                            table_data = []
-                            for result_idx, result_item in enumerate(results):
-                                if isinstance(result_item, dict) and 'error' not in result_item:
+                                for result_idx, result_item in enumerate(valid_detections_for_table):
                                     bbox = result_item.get('bbox', [])
                                     bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]" if len(bbox) >= 4 else "N/A"
                                     table_data.append({
@@ -1192,17 +1644,21 @@ elif main_section == "7. hCAPTCHA Demo":
                                         "Bounding Box": bbox_str,
                                         "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
                                     })
-                            if table_data:
-                                st.dataframe(table_data, width='stretch')
-                        else:
-                            st.info("No detections found")
-                        
-                        with st.expander("View Full Response"):
-                            st.json(result)
-                        
-                        if idx < len(accepted) - 1:
-                            st.markdown("---")
-        else:
-            st.warning("Crawl finished but no images were sent.")
-        st.info(f"Elapsed: {elapsed:.2f}s")
-        progress.progress(100)
+                                if table_data:
+                                    st.dataframe(table_data, width='stretch')
+                            else:
+                                # Show clear message when no detections found
+                                if results and isinstance(results, list) and len(results) > 0:
+                                    st.info(f"**No valid detections found** ({len(results)} invalid result(s))")
+                                else:
+                                    st.info("**No detections found**")
+                            
+                            with st.expander("View Full Response"):
+                                st.json(result)
+                            
+                            if idx < len(accepted) - 1:
+                                st.markdown("---")
+            else:
+                st.warning("Crawl finished but no images were sent.")
+            st.info(f"Elapsed: {elapsed:.2f}s")
+            progress.progress(100)
