@@ -14,8 +14,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 from app.config import API_TIMEOUT
+from app.utils.logger import get_logger
 
 os.environ['WDM_LOG_LEVEL'] = '0'  # Silence webdriver_manager logs
+
+# Initialize logger
+log = get_logger("crawler")
 
 # Import database function to check challenge_type matching
 try:
@@ -46,19 +50,19 @@ def get_challenge_type_id_for_question(question):
         if ct_doc:
             return ct_doc.get("challenge_type_id")
     except Exception as e:
-        print(f"Error getting challenge_type_id: {e}")
+        log.error(f"Error getting challenge_type_id: {e}")
     return None
 
 try:
     from client.clicker import perform_clicks  # type: ignore
-    print("/ Successfully imported perform_clicks from client.clicker")
+    log.success("Successfully imported perform_clicks from client.clicker")
 except Exception as e:
     try:
         from clicker import perform_clicks  # type: ignore
-        print("/ Successfully imported perform_clicks from clicker")
+        log.success("Successfully imported perform_clicks from clicker")
     except Exception as e2:
         perform_clicks = None  # type: ignore
-        print(f"X Failed to import perform_clicks: {e}, {e2}")
+        log.error(f"Failed to import perform_clicks: {e}, {e2}")
 
 
 def send_challenge_bytes(image_bytes, filename, question):
@@ -76,10 +80,10 @@ def send_challenge_bytes(image_bytes, filename, question):
         )
         return resp.json()
     except requests.exceptions.ConnectionError as e:
-        print(f" X  Connection error: {e}")
+        log.error(f"Connection error: {e}")
         return {'error': 'connection_failed', 'message': str(e)}
     except requests.exceptions.Timeout as e:
-        print(f" X  Timeout error: {e}")
+        log.error(f"Timeout error: {e}")
         return {'error': 'timeout', 'message': str(e)}
     except Exception as e:
         return {'error': 'invalid_json', 'status_code': resp.status_code, 'text': resp.text}
@@ -91,9 +95,9 @@ def fetch_image_bytes(url):
         response = requests.get(url, timeout=API_TIMEOUT)
         if response.status_code == 200:
             return response.content
-        print(f"Failed to download: {url}")
+        log.warning(f"Failed to download image: {url} (status: {response.status_code})")
     except Exception as e:
-        print(f"Error downloading image: {e}")
+        log.error(f"Error downloading image from {url}: {e}")
     return None
 
 
@@ -103,7 +107,7 @@ def send_canvas_images(driver, question):
     if not canvases:
         return 0, [] 
     
-    print(f"Found {len(canvases)} canvas elements.")
+    log.info(f"Found {len(canvases)} canvas element(s)")
     
     sent = 0
     accepted = []
@@ -120,47 +124,46 @@ def send_canvas_images(driver, question):
             result = send_challenge_bytes(image_data, filename, question)
             
             # Display inference results
-            print(f"\n--- Canvas {i} Inference Results ---")
+            log.subsection(f"Canvas {i} Inference Results")
             if isinstance(result, dict):
                 if 'error' in result:
-                    print(f"  X Error: {result['error']}")
-                    print(f"  X Inference NOT saved (errors are not stored)")
+                    log.error(f"Error: {result['error']}", indent=1)
+                    log.warning("Inference NOT saved (errors are not stored)", indent=1)
                 elif 'results' in result:
                     results = result.get('results', [])
                     if isinstance(results, list) and len(results) > 0:
-                        print(f"  / Detections: {len(results)} objects found")
+                        log.success(f"Detections: {len(results)} object(s) found", indent=1)
                         for idx, det in enumerate(results[:3], 1):  # Show first 3
                             if isinstance(det, dict):
-                                print(f"    {idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})")
+                                log.info(f"{idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})", indent=2)
                         if len(results) > 3:
-                            print(f"    ... and {len(results) - 3} more")
-                        print(f"  / Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})")
+                            log.info(f"... and {len(results) - 3} more", indent=2)
+                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
                     elif isinstance(results, dict) and 'message' in results:
-                        print(f"  X {results.get('message', 'No detections')}")
-                        print(f"  / Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})")
+                        log.warning(f"{results.get('message', 'No detections')}", indent=1)
+                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
                     else:
-                        print(f"  X No detections found")
-                        print(f"  / Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})")
+                        log.warning("No detections found", indent=1)
+                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
                 else:
-                    print(f"  Response: {result}")
+                    log.debug(f"Response: {result}", indent=1)
                 
                 # Display performance metrics
                 if 'perform_time' in result:
-                    print(f"  Performance: {result['perform_time']:.3f}s")
+                    log.info(f"Performance: {result['perform_time']:.3f}s", indent=1)
                 if 'model' in result and result['model']:
                     model_name = result['model'].get('model_name', 'Unknown')
-                    print(f"  Model: {model_name}")
+                    log.info(f"Model: {model_name}", indent=1)
                 
-                print("Performing automatic clicking on canvas using detections")
+                log.info("Performing automatic clicking on canvas using detections")
                 
                 # Attempt automatic clicking on canvas using detections
                 if perform_clicks and isinstance(result, dict):
-                    print("Inside perform_clicks function")
                     try:
                         # Get challenge_type_id for validation
                         challenge_type_id = get_challenge_type_id_for_question(question)
                         if challenge_type_id:
-                            print(f"  [crawler] Challenge type ID: {challenge_type_id} - applying validation rules")
+                            log.info(f"Challenge type ID: {challenge_type_id} - applying validation rules", indent=1)
                         
                         click_count = perform_clicks(
                             driver,
@@ -170,15 +173,15 @@ def send_canvas_images(driver, question):
                             challenge_type_id=challenge_type_id,
                         )
                         if click_count > 0:
-                            print(f"  / Automated canvas clicking executed: {click_count} clicks performed.")
+                            log.success(f"Automated canvas clicking executed: {click_count} click(s) performed", indent=1)
                         else:
-                            print(f"  X No clicks performed (0 detections found or no valid detections).")
+                            log.warning("No clicks performed (0 detections found or no valid detections)", indent=1)
                     except Exception as e:
-                        print(f"  X Automated canvas clicking failed: {e}")
+                        log.error(f"Automated canvas clicking failed: {e}", indent=1)
                         import traceback
                         traceback.print_exc()
                 elif not perform_clicks:
-                    print(" X  perform_clicks function not available (import failed).")
+                    log.error("perform_clicks function not available (import failed)", indent=1)
             
             # Provide data URL for Streamlit to render directly
             accepted.append({
@@ -188,7 +191,7 @@ def send_canvas_images(driver, question):
             })
             sent += 1
         except Exception as e:
-            print(f"Failed to send canvas {i}: {e}")
+            log.error(f"Failed to send canvas {i}: {e}")
     
     return sent, accepted
 
@@ -197,7 +200,7 @@ def send_nested_div_images(driver, question):
     """Extract all nested image divs containing background URLs, collect them, and send as batch to API."""
     divs = driver.find_elements(By.XPATH, "//div[contains(@class, 'image')]")
     if not divs:
-        print("No image divs found.")
+        log.warning("No image divs found")
         return 0, []
     
     # Collect all image tiles first
@@ -212,10 +215,10 @@ def send_nested_div_images(driver, question):
                 tile_idx = len(image_list) + 1
                 filename = f"tile{tile_idx}.jpg"
                 image_list.append((img_bytes, filename))
-                print(f"Collected Tile {tile_idx}: {filename}")
+                log.debug(f"Collected Tile {tile_idx}: {filename}")
     
     if not image_list:
-        print("No valid image tiles collected.")
+        log.warning("No valid image tiles collected")
         return 0, []
     
     total_tiles = len(image_list)
@@ -225,18 +228,18 @@ def send_nested_div_images(driver, question):
     if total_tiles == 10:
         sample_entry = image_list[0]
         batch_tiles = image_list[1:]
-        print("Detected 10 div images. Treating the first as the reference/sample image under the question.")
+        log.info("Detected 10 div images. Treating the first as the reference/sample image under the question")
     elif total_tiles == 9:
-        print("Detected 9 div images. All are clickable tiles (no sample image).")
+        log.info("Detected 9 div images. All are clickable tiles (no sample image)")
     else:
-        print(f"Detected {total_tiles} div images. Processing all as batch.")
+        log.info(f"Detected {total_tiles} div images. Processing all as batch")
 
     accepted = []
 
     # If a sample image exists, send it separately for contextual inference
     if sample_entry:
         sample_bytes, sample_filename = sample_entry
-        print(f"\nSending sample image {sample_filename} for inference...")
+        log.info(f"Sending sample image {sample_filename} for inference...")
         sample_result = send_challenge_bytes(sample_bytes, sample_filename, question)
         sample_b64 = base64.b64encode(sample_bytes).decode("utf-8")
         accepted.append({
@@ -247,7 +250,7 @@ def send_nested_div_images(driver, question):
 
     result = None
     if batch_tiles:
-        print(f"\nSending {len(batch_tiles)} tile image(s) as batch...")
+        log.info(f"Sending {len(batch_tiles)} tile image(s) as batch...")
         def build_files():
             built = []
             for img_bytes, filename in batch_tiles:
@@ -266,20 +269,20 @@ def send_nested_div_images(driver, question):
             )
             result = resp.json()
         except requests.exceptions.ConnectionError as e:
-            print(f" X  Connection error: {e}")
+            log.error(f"Connection error: {e}")
             result = {'error': 'connection_failed', 'message': str(e)}
         except requests.exceptions.Timeout as e:
-            print(f" X  Timeout error: {e}")
+            log.error(f"Timeout error: {e}")
             result = {'error': 'timeout', 'message': str(e)}
         except Exception as e:
-            print(f"  Unexpected batch error: {e}")
+            log.error(f"Unexpected batch error: {e}")
             result = {'error': 'unexpected', 'message': str(e)}
 
-        print(f"\n--- Batch Inference Results ---")
+        log.subsection("Batch Inference Results")
         if isinstance(result, dict):
             if 'error' in result:
-                print(f"  X Error: {result['error']}")
-                print(f"  X Inference NOT saved (errors are not stored)")
+                log.error(f"Error: {result['error']}", indent=1)
+                log.warning("Inference NOT saved (errors are not stored)", indent=1)
             elif 'results' in result:
                 all_results = result.get('results', [])
                 if isinstance(all_results, list):
@@ -295,37 +298,37 @@ def send_nested_div_images(driver, question):
                             successful_images += 1
                             total_detections += len(img_results)
                     
-                    print(f"  Images processed: {len(all_results)}")
-                    print(f"  / Successful: {successful_images} images")
+                    log.info(f"Images processed: {len(all_results)}", indent=1)
+                    log.success(f"Successful: {successful_images} image(s)", indent=1)
                     if error_images > 0:
-                        print(f"  X Errors: {error_images} images (not saved)")
-                    print(f"  Total detections: {total_detections} objects")
+                        log.error(f"Errors: {error_images} image(s) (not saved)", indent=1)
+                    log.info(f"Total detections: {total_detections} object(s)", indent=1)
                     
                     for img_result in all_results[:1]:
                         img_results = img_result.get('results', [])
                         if isinstance(img_results, list) and len(img_results) > 0:
-                            print(f"  Sample detections from image {img_result.get('image_index', 1)}:")
+                            log.info(f"Sample detections from image {img_result.get('image_index', 1)}:", indent=1)
                             for idx, det in enumerate(img_results[:3], 1):
                                 if isinstance(det, dict):
-                                    print(f"    {idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})")
-                    print(f"  / Inference records saved to database (challenge_id: {result.get('challenge_id', 'N/A')})")
+                                    log.info(f"{idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})", indent=2)
+                    log.success(f"Inference records saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
                 else:
-                    print(f"  Response: {result}")
+                    log.debug(f"Response: {result}", indent=1)
             else:
-                print(f"  Response: {result}")
+                log.debug(f"Response: {result}", indent=1)
 
             if 'perform_time' in result:
-                print(f"  Performance: {result['perform_time']:.3f}s")
+                log.info(f"Performance: {result['perform_time']:.3f}s", indent=1)
             if 'model' in result and result['model']:
                 model_name = result['model'].get('model_name', 'Unknown')
-                print(f"  Model: {model_name}")
+                log.info(f"Model: {model_name}", indent=1)
 
         if perform_clicks and isinstance(result, dict):
             try:
                 # Get challenge_type_id for validation
                 challenge_type_id = get_challenge_type_id_for_question(question)
                 if challenge_type_id:
-                    print(f"  [crawler] Challenge type ID: {challenge_type_id} - applying validation rules")
+                    log.info(f"Challenge type ID: {challenge_type_id} - applying validation rules", indent=1)
                 
                 click_count = perform_clicks(
                     driver,
@@ -335,15 +338,15 @@ def send_nested_div_images(driver, question):
                     challenge_type_id=challenge_type_id,
                 )
                 if click_count > 0:
-                    print(f"  / Automated tile clicking executed: {click_count} clicks performed.")
+                    log.success(f"Automated tile clicking executed: {click_count} click(s) performed", indent=1)
                 else:
-                    print(f"  X No clicks performed (0 detections found or no valid detections).")
+                    log.warning("No clicks performed (0 detections found or no valid detections)", indent=1)
             except Exception as e:
-                print(f"  X Automated tile clicking failed: {e}")
+                log.error(f"Automated tile clicking failed: {e}", indent=1)
                 import traceback
                 traceback.print_exc()
         elif not perform_clicks:
-            print(" X  perform_clicks function not available (import failed).")
+            log.error("perform_clicks function not available (import failed)", indent=1)
 
         for img_bytes, filename in batch_tiles:
             b64_payload = base64.b64encode(img_bytes).decode('utf-8')
@@ -379,7 +382,7 @@ def send_single_div_image_if_present(driver, question):
 
     tile_idx, img_bytes = valid_tiles[0]
     filename = f"tile{tile_idx}.jpg"
-    print(f"\nSingle div image detected (Tile {tile_idx}). Sending for inference as {filename}...")
+    log.info(f"Single div image detected (Tile {tile_idx}). Sending for inference as {filename}...")
     result = send_challenge_bytes(img_bytes, filename, question)
 
     data_url = f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('utf-8')}"
@@ -401,7 +404,7 @@ def check_question_matches_challenge_type(question):
             ct_doc = _find_challenge_type_for_question(question)
             return ct_doc is not None
         except Exception as e:
-            print(f"Error checking challenge_type match: {e}")
+            log.error(f"Error checking challenge_type match: {e}")
             return False
     else:
         # Fallback: use API to check (less efficient)
@@ -458,13 +461,13 @@ def click_refresh_button(driver, attempt_number):
                 try:
                     if refresh_button.is_displayed() and refresh_button.is_enabled():
                         refresh_button.click()
-                        print(f"  / Clicked refresh button (attempt {attempt_number}) using xpath: {xpath}")
+                        log.success(f"Clicked refresh button (attempt {attempt_number}) using xpath: {xpath}", indent=1)
                         return True
                 except Exception:
                     # If regular click fails, try JavaScript click
                     try:
                         driver.execute_script("arguments[0].click();", refresh_button)
-                        print(f"  / Clicked refresh button using JavaScript (attempt {attempt_number})")
+                        log.success(f"Clicked refresh button using JavaScript (attempt {attempt_number})", indent=1)
                         return True
                     except Exception:
                         continue
@@ -473,11 +476,11 @@ def click_refresh_button(driver, attempt_number):
                 continue
         
         # Try alternative method: find any element with refresh in class
-        print(f" X  Warning: Could not find refresh button with standard xpaths. Trying alternative methods...")
+        log.warning("Could not find refresh button with standard xpaths. Trying alternative methods...", indent=1)
         try:
             # Look for any element with refresh in class
             refresh_elements = driver.find_elements(By.XPATH, "//*[contains(@class, 'refresh')]")
-            print(f"  Found {len(refresh_elements)} elements with 'refresh' in class")
+            log.info(f"Found {len(refresh_elements)} element(s) with 'refresh' in class", indent=1)
             
             for elem in refresh_elements:
                 try:
@@ -487,26 +490,76 @@ def click_refresh_button(driver, attempt_number):
                         time.sleep(0.5)
                         # Try JavaScript click
                         driver.execute_script("arguments[0].click();", elem)
-                        print(f"  / Clicked refresh element using alternative method")
+                        log.success("Clicked refresh element using alternative method", indent=1)
                         return True
                 except Exception:
                     continue
         except Exception:
             pass
         
-        print(f"  X Error: Could not find or click refresh button after all attempts.")
+        log.error("Could not find or click refresh button after all attempts", indent=1)
         return False
         
     except Exception as e:
-        print(f"  X Error in click_refresh_button: {e}")
+        log.error(f"Error in click_refresh_button: {e}", indent=1)
         import traceback
         traceback.print_exc()
         return False
 
 
+def retrieve_question(driver, timeout=10):
+    """
+    Retrieve the current challenge question from the page.
+    
+    Args:
+        driver: Selenium WebDriver instance (must be in challenge iframe)
+        timeout: Maximum seconds to wait for question element (default: 10)
+    
+    Returns:
+        str: Question text, or None if not found
+    """
+    try:
+        # Wait for question element
+        prompt_element = WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.XPATH, "//h2[@dir='ltr']"))
+        )
+        time.sleep(1)  # Wait a bit for text to load
+        
+        try:
+            span_element = prompt_element.find_element(By.TAG_NAME, "span")
+            prompt_text = span_element.text.strip()
+        except:
+            prompt_text = prompt_element.text.strip()
+        
+        return prompt_text
+    except Exception as e:
+        log.error(f"Error retrieving question: {e}")
+        return None
+
+
+def check_submit_button_exists(driver, timeout=2):
+    """
+    Check if submit button exists without clicking.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        timeout: Maximum seconds to wait for button (default: 2)
+    
+    Returns:
+        bool: True if button exists and is visible, False otherwise
+    """
+    try:
+        submit_button = WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.XPATH, "//div[@class='button-submit button']"))
+        )
+        return submit_button.is_displayed()
+    except (TimeoutException, NoSuchElementException):
+        return False
+
+
 def click_submit_button(driver, wait_after_click=3):
     """
-    Click the submit button to proceed to next crumb or verify challenge.
+    Click the submit button to proceed to next round or verify challenge.
     
     Args:
         driver: Selenium WebDriver instance
@@ -516,18 +569,18 @@ def click_submit_button(driver, wait_after_click=3):
         bool: True if button was clicked successfully, False otherwise
     """
     try:
-        print(f"\nClicking submit button...")
+        log.info("Clicking submit button...")
         submit_button = WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.XPATH, "//div[@class='button-submit button']"))
         )
         driver.execute_script("arguments[0].scrollIntoView(true);", submit_button)
         time.sleep(0.5)
         submit_button.click()
-        print(f"/ Submit button clicked. Waiting {wait_after_click} seconds...")
+        log.success(f"Submit button clicked. Waiting {wait_after_click} seconds...")
         time.sleep(wait_after_click)
         return True
     except Exception as e:
-        print(f"X Error clicking submit button: {e}")
+        log.error(f"Error clicking submit button: {e}")
         import traceback
         traceback.print_exc()
         return False
@@ -535,9 +588,7 @@ def click_submit_button(driver, wait_after_click=3):
 
 def run_crawl_once():
     """Run single crawl of hCaptcha challenge."""
-    print(f"\n============================")
-    print(f"Starting single crawl ...")
-    print(f"============================")
+    log.section("Starting Single Crawl")
     
     driver = None
     matched = False  # Track if challenge matched and inference started
@@ -578,172 +629,123 @@ def run_crawl_once():
         checkbox = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.ID, "checkbox")))
         checkbox.click()
         driver.switch_to.default_content()
-        print("Checkbox clicked")
+        log.success("Checkbox clicked")
         
         # Step 2: Switch to challenge iframe
         challenge_iframe = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.XPATH, "//iframe[contains(@title, 'hCaptcha challenge')]"))
         )
         driver.switch_to.frame(challenge_iframe)
-        print("Challenge iframe detected")
+        log.success("Challenge iframe detected")
         
-        # Step 3: Retrieve Question and refresh until it matches a challenge_type
-        max_refresh_attempts = 20  # Maximum number of refresh attempts
-        refresh_count = 0
-        prompt_text = None
-        matched = False
+        # Step 3: Initialize counters and tracking
+        all_accepted = []  # Store all accepted results from all rounds
+        all_questions = []  # Store questions from all rounds
+        summary["sent_canvas"] = 0
+        summary["sent_divs"] = 0
         
-        while refresh_count < max_refresh_attempts:
-            try:
-                # Wait for question element
-                prompt_element = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//h2[@dir='ltr']"))
-                )
-                time.sleep(1)  # Wait a bit for text to load
-                
-                try:
-                    span_element = prompt_element.find_element(By.TAG_NAME, "span")
-                    prompt_text = span_element.text.strip()
-                except:
-                    prompt_text = prompt_element.text.strip()
-                
-                print(f"Challenge Question: {prompt_text}")
-                
-                # Check if question matches any challenge_type
-                matched = check_question_matches_challenge_type(prompt_text)
-                
-                if matched:
-                    print(f"/ Question matches a challenge_type. Proceeding with inference...")
-                    break
-                else:
-                    print(f"X Question does not match any challenge_type. Refreshing...")
-                    refresh_count += 1
-                    summary["refresh_count"] = refresh_count
-                    
-                    # Use improved refresh button clicking function
-                    if not click_refresh_button(driver, refresh_count):
-                        print(f"  Could not click refresh button. Stopping refresh attempts.")
-                        break
-                    
-                    # Wait for new challenge to load
-                    print(f"  Waiting for new challenge to load...")
-                    time.sleep(3)  # Increased wait time for challenge to reload
-                    
-            except Exception as e:
-                print(f"Error retrieving question: {e}")
+        # Main processing loop: continue until submit button is not found
+        # This unified approach works for both single-crumb and multi-crumb challenges
+        # Question is retrieved for each round
+        round_number = 0
+        max_rounds = 20  # Safety limit to prevent infinite loops
+        
+        while round_number < max_rounds:
+            round_number += 1
+            log.subsection(f"Processing Round {round_number}")
+            
+            # Retrieve question for this round
+            prompt_text = retrieve_question(driver, timeout=10)
+            if not prompt_text:
+                log.warning("Could not retrieve question for this round. Stopping...")
                 break
-        
-        if not matched:
-            print(f"\nX  Warning: Could not find a matching challenge_type after {refresh_count} refresh attempts.")
-            print(f"  Last question: {prompt_text}")
-            print(f"  Skipping inference for this challenge...")
-            summary["question"] = prompt_text
-            summary["total_sent"] = 0
-            return summary
-        
-        if not prompt_text:
-            print(f"\nX  Error: Could not retrieve question text.")
-            summary["total_sent"] = 0
-            return summary
-        
-        summary["question"] = prompt_text
-        
-        # Step 4: Check for crumb elements to determine if multi-crumb challenge
-        time.sleep(2)
-        crumb_elements = driver.find_elements(By.XPATH, "//div[@class='Crumb']")
-        crumb_count = len(crumb_elements)
-        summary["crumb_count"] = crumb_count
-        print(f"\nFound {crumb_count} crumb element(s)")
-        
-        all_accepted = []  # Store all accepted results from all crumbs
-        
-        if crumb_count > 1:
-            # Multi-crumb challenge: process each crumb separately
-            print(f"Multi-crumb challenge detected ({crumb_count} crumbs). Processing each separately...")
             
-            # Initialize counters for multi-crumb
-            summary["sent_canvas"] = 0
-            summary["sent_divs"] = 0
+            log.info(f"Challenge Question (Round {round_number}): {prompt_text}")
             
-            for crumb_idx in range(1, crumb_count + 1):
-                print(f"\n{'='*50}")
-                print(f"Processing Crumb {crumb_idx} of {crumb_count}")
-                print(f"{'='*50}")
-                
-                # Process current crumb
-                time.sleep(2)
-                
-                canvases = driver.find_elements(By.TAG_NAME, "canvas")
-                if canvases:
-                    print(f"Found {len(canvases)} canvas elements, sending...")
-                    sent, accepted = send_canvas_images(driver, prompt_text)
-                    print(f"Sent {sent} canvas images for crumb {crumb_idx}.")
-                    summary["sent_canvas"] += sent
-                    all_accepted.extend(accepted)
-
-                    # Even when canvas exists, check for a single div image that may carry semantic cues.
-                    div_sent, div_accepted = send_single_div_image_if_present(driver, prompt_text)
-                    if div_sent:
-                        print(f"Captured {div_sent} div image alongside canvas for crumb {crumb_idx}.")
-                        summary["sent_divs"] += div_sent
-                        all_accepted.extend(div_accepted)
+            # Validate question matches a challenge_type
+            matched = check_question_matches_challenge_type(prompt_text)
+            if not matched:
+                log.warning(f"Question does not match any challenge_type. Refreshing challenge...")
+                # Try to refresh the challenge
+                if click_refresh_button(driver, attempt_number=round_number):
+                    log.info("Challenge refreshed. Waiting for new challenge to load...", indent=1)
+                    time.sleep(3)  # Wait for new challenge to load
+                    continue  # Skip this round, retrieve new question in next iteration
                 else:
-                    print("No canvas found, scanning nested image divs...")
-                    sent, accepted = send_nested_div_images(driver, prompt_text)
-                    print(f"Sent {sent} nested image(s) as batch for crumb {crumb_idx}.")
-                    summary["sent_divs"] += sent
-                    all_accepted.extend(accepted)
-                
-                # After processing crumb, click submit button:
-                # - If not last crumb: proceed to next crumb
-                # - If last crumb: verify challenge
-                if crumb_idx < crumb_count:
-                    # Not last crumb: proceed to next crumb
-                    print(f"\nClicking submit button to proceed to crumb {crumb_idx + 1}...")
-                    if not click_submit_button(driver, wait_after_click=3):
-                        print(f"X Failed to click submit button. Stopping multi-crumb processing.")
-                        break
-                else:
-                    # Last crumb: click submit to verify challenge
-                    print(f"\nLast crumb processed. Clicking submit button to verify challenge...")
-                    click_submit_button(driver, wait_after_click=3)
-        else:
-            # Single crumb challenge (no crumbs found): process normally
-            print(f"Single-crumb challenge (no crumbs found). Proceeding with inference...")
+                    log.error("Could not click refresh button. Skipping this round...", indent=1)
+                    continue  # Skip this round if refresh fails
             
+            log.success("Question matches a challenge_type. Proceeding with inference...")
+            all_questions.append(prompt_text)
+            
+            # Get challenge_type_id for validation (for this round's question)
+            challenge_type_id = get_challenge_type_id_for_question(prompt_text)
+            
+            # Small delay to allow page to stabilize
+            time.sleep(2)
+            
+            # Perform inference + clicking (using current question)
             canvases = driver.find_elements(By.TAG_NAME, "canvas")
             if canvases:
-                print(f"Found {len(canvases)} canvas elements, sending...")
+                log.info(f"Found {len(canvases)} canvas element(s), sending...")
                 sent, accepted = send_canvas_images(driver, prompt_text)
-                print(f"Sent {sent} canvas images.")
-                summary["sent_canvas"] = sent
-                all_accepted = accepted
+                log.success(f"Sent {sent} canvas image(s) in round {round_number}")
+                summary["sent_canvas"] += sent
+                all_accepted.extend(accepted)
 
+                # Even when canvas exists, check for a single div image that may carry semantic cues
                 div_sent, div_accepted = send_single_div_image_if_present(driver, prompt_text)
                 if div_sent:
-                    print(f"Captured {div_sent} div image alongside canvas.")
+                    log.info(f"Captured {div_sent} div image alongside canvas in round {round_number}")
                     summary["sent_divs"] += div_sent
                     all_accepted.extend(div_accepted)
             else:
-                print("No canvas found â€” scanning nested image divs...")
+                log.info("No canvas found, scanning nested image divs...")
                 sent, accepted = send_nested_div_images(driver, prompt_text)
-                print(f"Sent {sent} nested image(s) as batch.")
-                summary["sent_divs"] = sent
-                all_accepted = accepted
+                log.success(f"Sent {sent} nested image(s) as batch in round {round_number}")
+                summary["sent_divs"] += sent
+                all_accepted.extend(accepted)
             
-            # After single crumb processing, click submit button to verify challenge
-            print(f"\nSingle crumb processed. Clicking submit button to verify challenge...")
-            click_submit_button(driver, wait_after_click=3)
+            # Check if submit button still exists
+            if check_submit_button_exists(driver, timeout=2):
+                log.info("Submit button found. Clicking to continue...")
+                if click_submit_button(driver, wait_after_click=3):
+                    log.success("Submit button clicked. Waiting for next round...")
+                    time.sleep(2)  # Additional wait for page to stabilize
+                    # Continue loop - will retrieve new question in next iteration
+                    continue
+                else:
+                    log.error("Failed to click submit button. Stopping...")
+                    break
+            else:
+                log.success("Submit button not found. Challenge complete!")
+                break
         
+        if round_number >= max_rounds:
+            log.warning(f"Reached maximum rounds limit ({max_rounds}). Stopping to prevent infinite loop.")
+        
+        # Store questions in summary (use first question as primary, or all questions)
+        if all_questions:
+            summary["question"] = all_questions[0]  # Primary question (first round)
+            summary["all_questions"] = all_questions  # All questions from all rounds
+        else:
+            summary["question"] = None
+            summary["all_questions"] = []
+        
+        # Check for crumb elements (for summary purposes)
+        crumb_elements = driver.find_elements(By.XPATH, "//div[@class='Crumb']")
+        crumb_count = len(crumb_elements)
+        summary["crumb_count"] = crumb_count
+        
+        # Calculate total and store results
         summary["total_sent"] = summary["sent_canvas"] + summary["sent_divs"]
         summary["accepted"] = all_accepted
         
         # Summary of inference saving
-        print(f"\n============================")
-        print(f"Crawl Summary:")
-        print(f"  Question: {summary['question']}")
-        print(f"  Crumb count: {summary['crumb_count']}")
-        print(f"  Images sent: {summary['total_sent']}")
+        log.section("Crawl Summary")
+        log.info(f"Question: {summary['question']}", indent=1)
+        log.info(f"Crumb count: {summary['crumb_count']}", indent=1)
+        log.info(f"Images sent: {summary['total_sent']}", indent=1)
         
         if summary.get('accepted'):
             successful_inferences = 0
@@ -764,29 +766,29 @@ def run_crawl_once():
                                 img_results = img_result.get('results', [])
                                 if isinstance(img_results, list) or (isinstance(img_results, dict) and 'error' not in img_results):
                                     successful_inferences += 1
-            print(f"  / Successful inferences saved: {successful_inferences}")
-        print(f"============================\n")
+            log.success(f"Successful inferences saved: {successful_inferences}", indent=1)
         
     except Exception as e:
-        print("Something went wrong:", e)
+        log.error(f"Something went wrong: {e}")
         import traceback
         traceback.print_exc()
     finally:
         if driver is not None:
-            # Wait 5 seconds before closing the browser to allow verification to complete
-            print(f"\nWaiting 5 seconds before closing browser...")
+            # Wait 5 seconds before closing the browser to allow final verification to complete
+            # This wait only happens after the submit button is no longer found (challenge complete)
+            log.info("Waiting 5 seconds before closing browser (allowing final verification)...")
             time.sleep(5)
-            print(f"Closing browser...")
+            log.info("Closing browser...")
             driver.quit()
         
         if matched:
-            print(f"hCaptcha Solver successfully bypass the challenge (inference finished).\n")
+            log.success("hCaptcha Solver successfully bypassed the challenge (inference finished)")
         else:
-            print(f"hCaptcha Solver failed to bypass the challenge due to there is no matching challenge_type found after max attempts.\n")
+            log.error("hCaptcha Solver failed to bypass the challenge - no matching challenge_type found after max attempts")
     
     return summary
 
 
 if __name__ == "__main__":
     result = run_crawl_once()
-    print("Summary:", result)
+    log.info(f"Summary: {result}")

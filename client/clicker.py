@@ -16,6 +16,11 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.common.exceptions import StaleElementReferenceException
 
+from app.utils.logger import get_logger
+
+# Initialize logger
+log = get_logger("clicker")
+
 
 def _extract_detections(result: Dict):
     """
@@ -73,7 +78,7 @@ def _validate_detections_by_challenge_type(detections: List[Dict], challenge_typ
         # Count occurrences of each class
         class_counts = Counter(d.get('class', '') for d in valid_detections)
         
-        print(f"  [validation] Challenge type ct-001: Class counts = {dict(class_counts)}")
+        log.debug(f"Challenge type ct-001: Class counts = {dict(class_counts)}", indent=1)
         
         # Filter to only include detections for classes that appear exactly twice
         filtered = [
@@ -82,8 +87,13 @@ def _validate_detections_by_challenge_type(detections: List[Dict], challenge_typ
         ]
         
         duplicate_classes = [cls for cls, count in class_counts.items() if count == 2]
-        print(f"  [validation] Classes appearing twice (to click): {duplicate_classes}")
-        print(f"  [validation] Filtered {len(valid_detections)} detections to {len(filtered)} (only duplicates)")
+        log.info(f"Classes appearing twice (to click): {duplicate_classes}", indent=1)
+        log.info(f"Filtered {len(valid_detections)} detections to {len(filtered)} (only duplicates)", indent=1)
+        
+        # For ct-001, limit to first 2 detections (only click 2 times total)
+        if len(filtered) > 2:
+            log.warning(f"Limiting to first 2 detections (ct-001 click limit: {len(filtered)} -> 2)", indent=1)
+            filtered = filtered[:2]
         
         return filtered
     
@@ -178,25 +188,34 @@ def click_canvas_from_response(
     Returns number of successful click attempts.
     """
     detections = _extract_detections(api_result)
-    print(f"  [click_canvas] Extracted {len(detections)} detections from API result")
+    log.info(f"Extracted {len(detections)} detections from API result", indent=1)
     
     if not detections:
-        print(f"  [click_canvas] No detections found in API result. Result keys: {list(api_result.keys()) if isinstance(api_result, dict) else 'not a dict'}")
+        log.warning(f"No detections found in API result. Result keys: {list(api_result.keys()) if isinstance(api_result, dict) else 'not a dict'}", indent=1)
         return 0
     
     # Apply challenge-type-specific validation
     if challenge_type_id:
         detections = _validate_detections_by_challenge_type(detections, challenge_type_id)
-        print(f"  [click_canvas] After validation: {len(detections)} detections remain")
+        log.info(f"After validation: {len(detections)} detections remain", indent=1)
     
     if not detections:
-        print(f"  [click_canvas] No detections remaining after validation")
+        log.warning("No detections remaining after validation", indent=1)
         return 0
     
     click_count = 0
     valid_detections = 0
+    max_clicks = 2 if challenge_type_id == "ct-001" else len(detections)  # Limit to 2 clicks for ct-001
+    
+    if challenge_type_id == "ct-001":
+        log.info(f"ct-001 click limit: Maximum {max_clicks} clicks allowed", indent=1)
     
     for det in detections:
+        # For ct-001, stop after 2 clicks
+        if challenge_type_id == "ct-001" and click_count >= max_clicks:
+            log.warning(f"Reached click limit ({max_clicks}) for ct-001. Stopping.", indent=1)
+            break
+        
         canvas_element = _ensure_canvas(driver, canvas_element)
         if canvas_element is None:
             print("  [click_canvas] Canvas element no longer available")
@@ -214,7 +233,7 @@ def click_canvas_from_response(
         intrinsic_height = float(canvas_element.get_attribute("height") or rect["height"])
         
         if intrinsic_width == 0 or intrinsic_height == 0:
-            print("  [click_canvas] Canvas dimensions invalid (0)")
+            log.error("Canvas dimensions invalid (0)", indent=1)
             break
         
         scale_x = rect["width"] / intrinsic_width
@@ -222,14 +241,14 @@ def click_canvas_from_response(
         
         bbox = det.get("bbox", [])
         if len(bbox) < 4:
-            print(f"  [click_canvas] Skipping detection with invalid bbox: {bbox}")
+            log.warning(f"Skipping detection with invalid bbox: {bbox}", indent=1)
             continue
         
         confidence = det.get("confidence", 0.0)
         
         # Click on all detections since they're already filtered by model thresholds
         if confidence < confidence_threshold:
-            print(f"  [click_canvas] Skipping detection with confidence {confidence:.2f} < threshold {confidence_threshold:.2f}")
+            log.debug(f"Skipping detection with confidence {confidence:.2f} < threshold {confidence_threshold:.2f}", indent=1)
             continue
         
         valid_detections += 1
@@ -246,9 +265,10 @@ def click_canvas_from_response(
         offset_x = center_x * scale_x - (rect["width"] / 2.0)
         offset_y = center_y * scale_y - (rect["height"] / 2.0)
         
-        print(
-            f"  â†’ Canvas click @ ({client_x:.1f}, {client_y:.1f}) "
-            f"(class={det.get('class')}, conf={confidence:.2f}, bbox={bbox})"
+        log.info(
+            f"Canvas click @ ({client_x:.1f}, {client_y:.1f}) "
+            f"(class={det.get('class')}, conf={confidence:.2f})",
+            indent=1
         )
         
         try:
@@ -261,14 +281,14 @@ def click_canvas_from_response(
                 client_y=client_y,
             )
             click_count += 1
-            print(f"  / Click {click_count}/{valid_detections} successful")
+            log.success(f"Click {click_count}/{max_clicks if challenge_type_id == 'ct-001' else valid_detections} successful", indent=1)
             time.sleep(max(pause_seconds, 0))
         except Exception as exc:
-            print(f"  X Canvas click failed: {exc}")
+            log.error(f"Canvas click failed: {exc}", indent=1)
             import traceback
             traceback.print_exc()
     
-    print(f"  [click_canvas] Total: {len(detections)} detections, {valid_detections} valid, {click_count} clicks performed")
+    log.info(f"Total: {len(detections)} detections, {valid_detections} valid, {click_count} clicks performed", indent=1)
     return click_count
 
 
@@ -352,9 +372,11 @@ def click_tiles_from_batch_response(driver, tile_elements, api_result, confidenc
         validated_detections = _validate_detections_by_challenge_type(all_detections, challenge_type_id)
         valid_classes = set(d.get('class', '') for d in validated_detections)
         
-        print(f"  [validation] Valid classes to click (appear twice): {valid_classes}")
+        log.info(f"Valid classes to click (appear twice): {valid_classes}", indent=1)
         
-        # Now determine which tiles contain these valid classes
+        # For ct-001, limit to only 2 clicks total
+        # Collect tiles with valid classes, but limit to first 2 tiles
+        tiles_with_valid_class = []
         for entry in batch_results:
             idx = entry.get("image_index")
             tile_idx = int(idx) - 1 + sample_offset
@@ -368,10 +390,19 @@ def click_tiles_from_batch_response(driver, tile_elements, api_result, confidenc
                     if isinstance(d, dict) and 'class' in d
                 )
                 
-                print(f"  Tile {idx} (API image_index): {len(detections)} detections, has_valid_class={has_valid_class} -> maps to element index {tile_idx}")
+                log.debug(f"Tile {idx} (API image_index): {len(detections)} detections, has_valid_class={has_valid_class} -> maps to element index {tile_idx}", indent=1)
                 
                 if has_valid_class:
-                    tiles_to_click.add(tile_idx)
+                    tiles_with_valid_class.append(tile_idx)
+        
+        # Limit to first 2 tiles for ct-001
+        if len(tiles_with_valid_class) > 2:
+            log.warning(f"Limiting to first 2 tiles (ct-001 click limit: {len(tiles_with_valid_class)} -> 2)", indent=1)
+            tiles_to_click = set(tiles_with_valid_class[:2])
+        else:
+            tiles_to_click = set(tiles_with_valid_class)
+        
+        log.info(f"ct-001 click limit: Will click {len(tiles_to_click)} tile(s) (max 2)", indent=1)
     else:
         # Default behavior: click tiles with any positive detection
         for entry in batch_results:
