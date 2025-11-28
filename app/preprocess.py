@@ -216,6 +216,58 @@ def apply_grayscale(img, params):
     return img
 
 
+def apply_resize(img, params):
+    """
+    Resize image to specified dimensions or scale factors.
+    
+    params: {
+        "width": int (optional, target width in pixels),
+        "height": int (optional, target height in pixels),
+        "fx": float (optional, horizontal scale factor),
+        "fy": float (optional, vertical scale factor),
+        "interpolation": str (optional, one of: "linear", "cubic", "area", "nearest", "lanczos")
+    }
+    
+    Note: Either (width, height) or (fx, fy) should be provided.
+    If both are provided, (width, height) takes precedence.
+    """
+    if not CV2_AVAILABLE:
+        raise ImportError("OpenCV (cv2) is required for resize")
+    
+    # Get interpolation method
+    interpolation_map = {
+        "linear": cv2.INTER_LINEAR,
+        "cubic": cv2.INTER_CUBIC,
+        "area": cv2.INTER_AREA,
+        "nearest": cv2.INTER_NEAREST,
+        "lanczos": cv2.INTER_LANCZOS4,
+    }
+    interpolation_str = params.get("interpolation", "linear").lower()
+    interpolation = interpolation_map.get(interpolation_str, cv2.INTER_LINEAR)
+    
+    # Get target dimensions
+    width = params.get("width")
+    height = params.get("height")
+    
+    # Get scale factors
+    fx = params.get("fx")
+    fy = params.get("fy")
+    
+    # Determine resize method
+    if width is not None and height is not None:
+        # Resize to exact dimensions
+        dsize = (int(width), int(height))
+        return cv2.resize(img, dsize, interpolation=interpolation)
+    elif fx is not None or fy is not None:
+        # Resize using scale factors
+        fx = fx if fx is not None else 1.0
+        fy = fy if fy is not None else fx  # If only fx provided, use same for fy
+        return cv2.resize(img, None, fx=fx, fy=fy, interpolation=interpolation)
+    else:
+        # No resize parameters provided, return original
+        return img
+
+
 # Operation registry
 OPERATION_REGISTRY = {
     "bilateral": apply_bilateral,
@@ -225,7 +277,8 @@ OPERATION_REGISTRY = {
     "laplacian": apply_laplacian,
     "addweighted": apply_addweighted,
     "grayscale": apply_grayscale,
-    "sharpen": apply_sharpen,          
+    "sharpen": apply_sharpen,
+    "resize": apply_resize,
 }
 
 

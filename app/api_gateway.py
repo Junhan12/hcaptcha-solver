@@ -126,7 +126,7 @@ def solve_hcaptcha():
                 postprocess_meta = {
                     'postprocess_id': postprocess_profile.get('postprocess_id'),
                     'name': postprocess_profile.get('name'),
-                    'steps': postprocess_profile.get('steps', {}),  # Contains confidence_threshold and iou_threshold
+                    'steps': postprocess_profile.get('steps', []),  # List of operations
                 }
         except Exception as e:
             print(f"Postprocess retrieval error: {e}")
@@ -152,17 +152,22 @@ def solve_hcaptcha():
     inference_start_time = time.time()
     try:
         if model_doc:
-            # Extract postprocess steps if available
-            postprocess_steps = None
-            if postprocess_meta and postprocess_meta.get('steps'):
-                postprocess_steps = postprocess_meta.get('steps')
+            # Pass full postprocess profile for modular postprocessing
+            postprocess_profile = None
+            if postprocess_meta:
+                # Pass the full postprocess_profile structure
+                postprocess_profile = {
+                    'postprocess_id': postprocess_meta.get('postprocess_id'),
+                    'name': postprocess_meta.get('name'),
+                    'steps': postprocess_meta.get('steps', [])
+                }
             
-            # Use processed image for inference with postprocess steps
+            # Use processed image for inference with postprocess profile
             inference_results = solve_captcha(
                 processed_img_bytes, 
                 question, 
                 config,
-                postprocess_steps=postprocess_steps
+                postprocess_profile=postprocess_profile
             )
             # Handle new return format: could be list, dict with 'error', or dict with 'message'
             if isinstance(inference_results, dict):
@@ -323,13 +328,10 @@ def solve_hcaptcha_batch():
             print(f"Preprocess profile retrieval error: {e}")
     
     # Get postprocess profile for inference (retrieve once, use for all images)
-    postprocess_profile = None
-    postprocess_steps = None
+    postprocess_profile_retrieved = None
     if model_doc:
         try:
-            postprocess_profile = get_postprocess_for_model(model_doc)
-            if postprocess_profile:
-                postprocess_steps = postprocess_profile.get('steps', {})
+            postprocess_profile_retrieved = get_postprocess_for_model(model_doc)
         except Exception as e:
             print(f"Postprocess profile retrieval error: {e}")
     
@@ -365,11 +367,20 @@ def solve_hcaptcha_batch():
         inference_start_time = time.time()
         try:
             if model_doc:
+                # Pass full postprocess profile for modular postprocessing
+                postprocess_profile = None
+                if postprocess_profile_retrieved:
+                    postprocess_profile = {
+                        'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
+                        'name': postprocess_profile_retrieved.get('name'),
+                        'steps': postprocess_profile_retrieved.get('steps', [])
+                    }
+                
                 image_results = solve_captcha(
                     processed_img_bytes,
                     question,
                     config,
-                    postprocess_steps=postprocess_steps
+                    postprocess_profile=postprocess_profile
                 )
                 # Handle new return format: could be list, dict with 'error', or dict with 'message'
                 if isinstance(image_results, dict):
@@ -496,12 +507,12 @@ def solve_hcaptcha_batch():
                 'name': preprocess_profile.get('name'),
             }
         
-        # Get postprocess metadata (use already retrieved postprocess_profile)
-        if postprocess_profile:
+        # Get postprocess metadata (use already retrieved postprocess_profile_retrieved)
+        if postprocess_profile_retrieved:
             postprocess_meta = {
-                'postprocess_id': postprocess_profile.get('postprocess_id'),
-                'name': postprocess_profile.get('name'),
-                'steps': postprocess_profile.get('steps', {}),  # Contains confidence_threshold and iou_threshold
+                'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
+                'name': postprocess_profile_retrieved.get('name'),
+                'steps': postprocess_profile_retrieved.get('steps', []),  # List of operations
             }
 
     message = None

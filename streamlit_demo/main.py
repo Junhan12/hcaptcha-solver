@@ -528,12 +528,16 @@ elif main_section == "6. Model Training Evaluation":
                                         
                                         # Get preprocessing and postprocessing profiles for the selected model
                                         preprocess_profile = get_preprocess_for_model(selected_model)
-                                        postprocess_profile = get_postprocess_for_model(selected_model)
+                                        postprocess_profile_retrieved = get_postprocess_for_model(selected_model)
                                         
-                                        # Extract postprocess steps if available
-                                        postprocess_steps = None
-                                        if postprocess_profile and postprocess_profile.get('steps'):
-                                            postprocess_steps = postprocess_profile.get('steps')
+                                        # Prepare postprocess profile for solve_captcha (full structure)
+                                        postprocess_profile = None
+                                        if postprocess_profile_retrieved:
+                                            postprocess_profile = {
+                                                'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
+                                                'name': postprocess_profile_retrieved.get('name'),
+                                                'steps': postprocess_profile_retrieved.get('steps', [])
+                                            }
                                         
                                         # Run inference directly on validation images (no API, no validation)
                                         all_predictions = []
@@ -565,7 +569,7 @@ elif main_section == "6. Model Training Evaluation":
                                                     processed_img_bytes,
                                                     question="",  # Empty question - bypasses validation
                                                     config=model_config,
-                                                    postprocess_steps=postprocess_steps
+                                                    postprocess_profile=postprocess_profile
                                                 )
                                                 
                                                 # Handle inference result
@@ -926,11 +930,30 @@ elif main_section == "7. hCAPTCHA Demo":
                         # Display postprocessing info
                         postprocess = out.get("postprocess")
                         if postprocess:
-                            steps = postprocess.get('steps', {})
-                            conf_thresh = steps.get('confidence_threshold', 'N/A')
-                            iou_thresh = steps.get('iou_threshold', 'N/A')
+                            steps = postprocess.get('steps', [])
+                            # Extract thresholds from nms operation if present
+                            conf_thresh = 'N/A'
+                            iou_thresh = 'N/A'
+                            if isinstance(steps, list):
+                                for step in steps:
+                                    if isinstance(step, dict) and step.get('operation') == 'nms':
+                                        params = step.get('params', {})
+                                        conf_thresh = params.get('confidence_threshold', 'N/A')
+                                        iou_thresh = params.get('iou_threshold', 'N/A')
+                                        break
+                            elif isinstance(steps, dict):
+                                # Legacy format support
+                                conf_thresh = steps.get('confidence_threshold', 'N/A')
+                                iou_thresh = steps.get('iou_threshold', 'N/A')
+                            
                             st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                            st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                            if isinstance(steps, list) and len(steps) > 0:
+                                operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
+                                st.caption(f"Operations: {', '.join(operations)}")
+                                if conf_thresh != 'N/A' or iou_thresh != 'N/A':
+                                    st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                            else:
+                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
                         
                         # Display performance
                         st.metric("Processing Time", f"{out.get('perform_time', 0):.3f}s")
@@ -1108,11 +1131,30 @@ elif main_section == "7. hCAPTCHA Demo":
                                         
                                         postprocess = result.get("postprocess")
                                         if postprocess:
-                                            steps = postprocess.get('steps', {})
-                                            conf_thresh = steps.get('confidence_threshold', 'N/A')
-                                            iou_thresh = steps.get('iou_threshold', 'N/A')
+                                            steps = postprocess.get('steps', [])
+                                            # Extract thresholds from nms operation if present
+                                            conf_thresh = 'N/A'
+                                            iou_thresh = 'N/A'
+                                            if isinstance(steps, list):
+                                                for step in steps:
+                                                    if isinstance(step, dict) and step.get('operation') == 'nms':
+                                                        params = step.get('params', {})
+                                                        conf_thresh = params.get('confidence_threshold', 'N/A')
+                                                        iou_thresh = params.get('iou_threshold', 'N/A')
+                                                        break
+                                            elif isinstance(steps, dict):
+                                                # Legacy format support
+                                                conf_thresh = steps.get('confidence_threshold', 'N/A')
+                                                iou_thresh = steps.get('iou_threshold', 'N/A')
+                                            
                                             st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                                            st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                            if isinstance(steps, list) and len(steps) > 0:
+                                                operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
+                                                st.caption(f"Operations: {', '.join(operations)}")
+                                                if conf_thresh != 'N/A' or iou_thresh != 'N/A':
+                                                    st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                            else:
+                                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
                                         
                                         if 'perform_time' in result:
                                             st.metric("Processing Time", f"{result.get('perform_time', 0):.3f}s")
@@ -1222,17 +1264,62 @@ elif main_section == "7. hCAPTCHA Demo":
                             with col2:
                                 postprocess = first_result.get('postprocess')
                                 if postprocess:
-                                    steps = postprocess.get('steps', {})
-                                    conf_thresh = steps.get('confidence_threshold', 'N/A')
-                                    iou_thresh = steps.get('iou_threshold', 'N/A')
+                                    steps = postprocess.get('steps', [])
+                                    # Extract thresholds from nms operation if present
+                                    conf_thresh = 'N/A'
+                                    iou_thresh = 'N/A'
+                                    if isinstance(steps, list):
+                                        for step in steps:
+                                            if isinstance(step, dict) and step.get('operation') == 'nms':
+                                                params = step.get('params', {})
+                                                conf_thresh = params.get('confidence_threshold', 'N/A')
+                                                iou_thresh = params.get('iou_threshold', 'N/A')
+                                                break
+                                    elif isinstance(steps, dict):
+                                        # Legacy format support
+                                        conf_thresh = steps.get('confidence_threshold', 'N/A')
+                                        iou_thresh = steps.get('iou_threshold', 'N/A')
+                                    
                                     st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                                    st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                    if isinstance(steps, list) and len(steps) > 0:
+                                        operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
+                                        st.caption(f"Operations: {', '.join(operations)}")
+                                        if conf_thresh != 'N/A' or iou_thresh != 'N/A':
+                                            st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                    else:
+                                        st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
                         
                         # Display each image with results
                         # For batch results, the 'results' field contains an array of batch items
                         # Each batch item has: {image_index, image_name, results: [detections]}
-                        batch_results = first_result.get('results', []) if isinstance(first_result, dict) else []
-                        processed_images = first_result.get('processed_images', []) if isinstance(first_result, dict) else []
+                        # IMPORTANT: batch_results should come from a batch item, not the sample tile
+                        # All batch images share the same result object, so we can get it from any batch item
+                        batch_results = []
+                        processed_images = []
+                        has_sample_tile = False
+                        
+                        # Detect if first item is a sample tile (sent separately, not in batch)
+                        if len(accepted) > 1:
+                            first_item_result = accepted[0].get("result", {})
+                            batch_item_result = accepted[1].get("result", {}) if len(accepted) > 1 else {}
+                            
+                            # Check if first item is a sample tile
+                            if isinstance(first_item_result, dict):
+                                first_results = first_item_result.get('results', [])
+                                if isinstance(first_results, list) and len(first_results) > 0:
+                                    if not isinstance(first_results[0], dict) or 'image_index' not in first_results[0]:
+                                        has_sample_tile = True
+                                elif isinstance(first_item_result, dict) and 'processed_image' in first_item_result:
+                                    has_sample_tile = True
+                            
+                            # Get batch_results from a batch item (not the sample tile)
+                            if has_sample_tile and isinstance(batch_item_result, dict):
+                                batch_results = batch_item_result.get('results', [])
+                                processed_images = batch_item_result.get('processed_images', [])
+                            elif not has_sample_tile and isinstance(first_result, dict):
+                                # No sample tile, batch results are in first_result
+                                batch_results = first_result.get('results', [])
+                                processed_images = first_result.get('processed_images', [])
                         
                         # Debug: Log batch results structure
                         print(f"Debug: batch_results type={type(batch_results)}, length={len(batch_results) if isinstance(batch_results, list) else 'N/A'}")
@@ -1249,18 +1336,6 @@ elif main_section == "7. hCAPTCHA Demo":
                                 batch_results_by_index[batch_item['image_index']] = batch_item
                         
                         print(f"Debug: batch_results_by_index keys: {list(batch_results_by_index.keys())}")
-                        
-                        # Detect if first item is a sample tile (sent separately, not in batch)
-                        has_sample_tile = False
-                        if len(accepted) == len(batch_results) + 1 and len(accepted) > 0:
-                            first_item_result = accepted[0].get("result", {})
-                            if isinstance(first_item_result, dict):
-                                first_results = first_item_result.get('results', [])
-                                if isinstance(first_results, list) and len(first_results) > 0:
-                                    if not isinstance(first_results[0], dict) or 'image_index' not in first_results[0]:
-                                        has_sample_tile = True
-                                elif isinstance(first_item_result, dict) and 'processed_image' in first_item_result:
-                                    has_sample_tile = True
                         
                         sample_offset = 1 if has_sample_tile else 0
                         
@@ -1571,11 +1646,30 @@ elif main_section == "7. hCAPTCHA Demo":
                                     
                                     postprocess = result.get("postprocess")
                                     if postprocess:
-                                        steps = postprocess.get('steps', {})
-                                        conf_thresh = steps.get('confidence_threshold', 'N/A')
-                                        iou_thresh = steps.get('iou_threshold', 'N/A')
+                                        steps = postprocess.get('steps', [])
+                                        # Extract thresholds from nms operation if present
+                                        conf_thresh = 'N/A'
+                                        iou_thresh = 'N/A'
+                                        if isinstance(steps, list):
+                                            for step in steps:
+                                                if isinstance(step, dict) and step.get('operation') == 'nms':
+                                                    params = step.get('params', {})
+                                                    conf_thresh = params.get('confidence_threshold', 'N/A')
+                                                    iou_thresh = params.get('iou_threshold', 'N/A')
+                                                    break
+                                        elif isinstance(steps, dict):
+                                            # Legacy format support
+                                            conf_thresh = steps.get('confidence_threshold', 'N/A')
+                                            iou_thresh = steps.get('iou_threshold', 'N/A')
+                                        
                                         st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                                        st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                        if isinstance(steps, list) and len(steps) > 0:
+                                            operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
+                                            st.caption(f"Operations: {', '.join(operations)}")
+                                            if conf_thresh != 'N/A' or iou_thresh != 'N/A':
+                                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                        else:
+                                            st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
                                     
                                     if 'perform_time' in result:
                                         st.metric("Processing Time", f"{result.get('perform_time', 0):.3f}s")
