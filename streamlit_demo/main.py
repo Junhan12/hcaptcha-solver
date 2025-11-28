@@ -882,7 +882,10 @@ elif main_section == "7. hCAPTCHA Demo":
                                 img_bytes = base64.b64decode(processed_img_b64)
                                 img = Image.open(io.BytesIO(img_bytes))
                                 
-                                # Draw bounding boxes on image
+                                # Get processed image dimensions
+                                processed_width, processed_height = img.size
+                                
+                                # Draw bounding boxes on image if there are detections
                                 if results:
                                     draw = ImageDraw.Draw(img)
                                     # Try to load a font, fallback to default if not available
@@ -913,7 +916,12 @@ elif main_section == "7. hCAPTCHA Demo":
                                             # Draw text
                                             draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                     
-                                    st.image(img, caption="Processed Image with Detections", width='stretch')
+                                    caption = f"Processed Image with Detections ({processed_width} × {processed_height})"
+                                else:
+                                    caption = f"Processed Image - No Detections ({processed_width} × {processed_height})"
+                                
+                                # Always display the processed image at its actual size
+                                st.image(img, caption=caption, width=processed_width)
                             except Exception as e:
                                 st.error(f"Failed to display image: {e}")
                         else:
@@ -1066,6 +1074,9 @@ elif main_section == "7. hCAPTCHA Demo":
                                             img_bytes = base64.b64decode(display_img_b64)
                                             img = Image.open(io.BytesIO(img_bytes))
                                             
+                                            # Get processed image dimensions
+                                            processed_width, processed_height = img.size
+                                            
                                             # Draw bounding boxes if there are valid detections
                                             valid_detections = []
                                             if results and isinstance(results, list) and len(results) > 0:
@@ -1104,11 +1115,13 @@ elif main_section == "7. hCAPTCHA Demo":
                                                             draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                             draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                             
-                                            # Always display the image (with or without detections)
+                                            # Always display the image (with or without detections) at processed size
                                             if valid_detections:
-                                                st.image(img, caption=f"{filename} (Challenge {challenge_idx}) - With Detections", width='stretch')
+                                                caption = f"{filename} (Challenge {challenge_idx}) - With Detections ({processed_width} × {processed_height})"
                                             else:
-                                                st.image(img, caption=f"{filename} (Challenge {challenge_idx}) - No Detections", width='stretch')
+                                                caption = f"{filename} (Challenge {challenge_idx}) - No Detections ({processed_width} × {processed_height})"
+                                            
+                                            st.image(img, caption=caption, width=processed_width)
                                         except Exception as e:
                                             st.error(f"Failed to display image: {e}")
                                     else:
@@ -1292,34 +1305,8 @@ elif main_section == "7. hCAPTCHA Demo":
                         # Display each image with results
                         # For batch results, the 'results' field contains an array of batch items
                         # Each batch item has: {image_index, image_name, results: [detections]}
-                        # IMPORTANT: batch_results should come from a batch item, not the sample tile
-                        # All batch images share the same result object, so we can get it from any batch item
-                        batch_results = []
-                        processed_images = []
-                        has_sample_tile = False
-                        
-                        # Detect if first item is a sample tile (sent separately, not in batch)
-                        if len(accepted) > 1:
-                            first_item_result = accepted[0].get("result", {})
-                            batch_item_result = accepted[1].get("result", {}) if len(accepted) > 1 else {}
-                            
-                            # Check if first item is a sample tile
-                            if isinstance(first_item_result, dict):
-                                first_results = first_item_result.get('results', [])
-                                if isinstance(first_results, list) and len(first_results) > 0:
-                                    if not isinstance(first_results[0], dict) or 'image_index' not in first_results[0]:
-                                        has_sample_tile = True
-                                elif isinstance(first_item_result, dict) and 'processed_image' in first_item_result:
-                                    has_sample_tile = True
-                            
-                            # Get batch_results from a batch item (not the sample tile)
-                            if has_sample_tile and isinstance(batch_item_result, dict):
-                                batch_results = batch_item_result.get('results', [])
-                                processed_images = batch_item_result.get('processed_images', [])
-                            elif not has_sample_tile and isinstance(first_result, dict):
-                                # No sample tile, batch results are in first_result
-                                batch_results = first_result.get('results', [])
-                                processed_images = first_result.get('processed_images', [])
+                        batch_results = first_result.get('results', []) if isinstance(first_result, dict) else []
+                        processed_images = first_result.get('processed_images', []) if isinstance(first_result, dict) else []
                         
                         # Debug: Log batch results structure
                         print(f"Debug: batch_results type={type(batch_results)}, length={len(batch_results) if isinstance(batch_results, list) else 'N/A'}")
@@ -1336,6 +1323,18 @@ elif main_section == "7. hCAPTCHA Demo":
                                 batch_results_by_index[batch_item['image_index']] = batch_item
                         
                         print(f"Debug: batch_results_by_index keys: {list(batch_results_by_index.keys())}")
+                        
+                        # Detect if first item is a sample tile (sent separately, not in batch)
+                        has_sample_tile = False
+                        if len(accepted) == len(batch_results) + 1 and len(accepted) > 0:
+                            first_item_result = accepted[0].get("result", {})
+                            if isinstance(first_item_result, dict):
+                                first_results = first_item_result.get('results', [])
+                                if isinstance(first_results, list) and len(first_results) > 0:
+                                    if not isinstance(first_results[0], dict) or 'image_index' not in first_results[0]:
+                                        has_sample_tile = True
+                                elif isinstance(first_item_result, dict) and 'processed_image' in first_item_result:
+                                    has_sample_tile = True
                         
                         sample_offset = 1 if has_sample_tile else 0
                         
@@ -1402,12 +1401,16 @@ elif main_section == "7. hCAPTCHA Demo":
                                         img_bytes = base64.b64decode(display_img_b64)
                                         img = Image.open(io.BytesIO(img_bytes))
                                         
+                                        # Get processed image dimensions
+                                        processed_width, processed_height = img.size
+                                        
                                         results_to_draw = None
                                         if has_sample_tile and img_idx == 0:
                                             results_to_draw = result.get('results', []) if isinstance(result, dict) else []
                                         elif image_result_data:
                                             results_to_draw = image_result_data.get('results', [])
                                         
+                                        valid_detections = []
                                         if results_to_draw and isinstance(results_to_draw, list) and len(results_to_draw) > 0:
                                             valid_detections = [r for r in results_to_draw if isinstance(r, dict) and 'error' not in r and 'bbox' in r and len(r.get('bbox', [])) >= 4]
                                             if valid_detections:
@@ -1434,7 +1437,13 @@ elif main_section == "7. hCAPTCHA Demo":
                                                         draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                         draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                         
-                                        st.image(img, caption=f"{filename} (with detections)", width='stretch')
+                                        # Always display the image (with or without detections) at processed size
+                                        if valid_detections:
+                                            caption = f"{filename} - With Detections ({processed_width} × {processed_height})"
+                                        else:
+                                            caption = f"{filename} - No Detections ({processed_width} × {processed_height})"
+                                        
+                                        st.image(img, caption=caption, width=processed_width)
                                     except Exception as e:
                                         st.error(f"Failed to display image: {e}")
                                 else:
@@ -1582,6 +1591,9 @@ elif main_section == "7. hCAPTCHA Demo":
                                         img_bytes = base64.b64decode(display_img_b64)
                                         img = Image.open(io.BytesIO(img_bytes))
                                         
+                                        # Get processed image dimensions
+                                        processed_width, processed_height = img.size
+                                        
                                         # Draw bounding boxes if there are valid detections
                                         valid_detections = []
                                         if results and isinstance(results, list) and len(results) > 0:
@@ -1620,11 +1632,13 @@ elif main_section == "7. hCAPTCHA Demo":
                                                         draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
                                                         draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
                                         
-                                        # Always display the image (with or without detections)
+                                        # Always display the image (with or without detections) at processed size
                                         if valid_detections:
-                                            st.image(img, caption="Processed Image with Detections", width='stretch')
+                                            caption = f"Processed Image with Detections ({processed_width} × {processed_height})"
                                         else:
-                                            st.image(img, caption="Processed Image (No Detections)", width='stretch')
+                                            caption = f"Processed Image (No Detections) ({processed_width} × {processed_height})"
+                                        
+                                        st.image(img, caption=caption, width=processed_width)
                                     except Exception as e:
                                         st.error(f"Failed to display image: {e}")
                                 else:

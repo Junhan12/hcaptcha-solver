@@ -612,7 +612,7 @@ def create_or_update_model():
     else:
         # Metadata-only update (fast, no need for background)
         upsert_model(model_id, model_name, None, results, is_active=is_active)
-        return jsonify({'ok': True, 'model_id': model_id})
+    return jsonify({'ok': True, 'model_id': model_id})
 
 @app.route('/models', methods=['GET'])
 def get_models():
