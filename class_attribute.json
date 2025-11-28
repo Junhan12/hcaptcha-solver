@@ -371,7 +371,7 @@
       "television",
       "watch",
       "headphones",
-      "socket"
+      "plug"
     ]
   },
   "clothing": {
@@ -465,6 +465,11 @@
       "things you can see through",
       "things that show what is inside"
     ],
+    "logic": {
+      "groups_any": [
+        "transparent"
+      ]
+    },
     "includes": [
       "bottle",
       "watch",
@@ -495,108 +500,23 @@
   }
 }
 
-"keywords": [
-      {
-        "category": "electronics",
-        "keywords_en": [
-          "electronics",
-          "device",
-          "gadgets",
-          "tech devices",
-          "wired object",
-          "wireless device",
-          "computer accessories",
-          "openable device",
-          "hinged device",
-          "electric plug",
-          "things that use electricity",
-          "things that need power",
-          "powered devices",
-          "things with screens",
-          "things you can charge",
-          "things with batteries",
-          "things that plug into the wall",
-          "digital devices"
-        ],
-        "logic": {
-          "groups_any": [
-            "electronic"
-          ]
-        },
-        "includes": [
-          "calculator",
-          "keyboard",
-          "laptop",
-          "monitor",
-          "mouse",
-          "speaker",
-          "printer",
-          "television",
-          "watch",
-          "headphones",
-          "socket"
-        ]
-      },
-    ]`
-  "electronics": {
-      "description": "Select all electronic devices",
+
+  "keywords": [
+    {
+      "category": "longest_legs",
       "keywords_en": [
-        "electronics",
-        "device",
-        "gadgets",
-        "tech devices",
-        "wired object",
-        "wireless device",
-        "computer accessories",
-        "openable device",
-        "hinged device",
-        "electric plug",
-        "things that use electricity",
-        "things that need power",
-        "powered devices",
-        "things with screens",
-        "things you can charge",
-        "things with batteries",
-        "things that plug into the wall",
-        "digital devices"
+        "find",
+        "species",
+        "longest legs"
       ],
-      "logic": {
+      "groups": {
         "groups_any": [
-          "electronic"
+          "longest_legs"
         ]
       },
       "includes": [
-        "calculator",
-        "keyboard",
-        "laptop",
-        "monitor",
-        "mouse",
-        "speaker",
-        "printer",
-        "television",
-        "watch",
-        "headphones",
-        "socket"
+        "cats",
+        "dogs"
       ]
-    },
-
-    {
-      "_id": {
-        "$oid": "692972f5845623c99cc4bb24"
-      },
-      "challenge_type_id": "ct-006",
-      "keywords": [
-        {
-          "category": "shapes",
-          "keywords_en": [
-            "click",
-            "two elements",
-            "similar"
-          ]
-        }
-      ],
-      "method": "click",
-      "model_id": "m-005"
     }
-   
-  
+  ],

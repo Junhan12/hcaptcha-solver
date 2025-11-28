@@ -218,23 +218,33 @@ def apply_grayscale(img, params):
 
 def apply_resize(img, params):
     """
-    Resize image to specified dimensions or scale factors.
-    
+    Resize image to specified dimensions.
     params: {
-        "width": int (optional, target width in pixels),
-        "height": int (optional, target height in pixels),
-        "fx": float (optional, horizontal scale factor),
-        "fy": float (optional, vertical scale factor),
-        "interpolation": str (optional, one of: "linear", "cubic", "area", "nearest", "lanczos")
+        "width": int (target width in pixels),
+        "height": int (target height in pixels),
+        "maintain_aspect": bool (default: False, if True, calculates 
+                                  missing dimension to preserve aspect ratio),
+        "interpolation": str (default: "linear", options: "linear", "cubic", 
+                              "area", "nearest", "lanczos")
     }
     
-    Note: Either (width, height) or (fx, fy) should be provided.
-    If both are provided, (width, height) takes precedence.
+    Examples:
+        - {"width": 640, "height": 480} - resize to exact dimensions
+        - {"width": 640, "maintain_aspect": true} - resize width, auto height
+        - {"height": 480, "maintain_aspect": true} - resize height, auto width
     """
     if not CV2_AVAILABLE:
         raise ImportError("OpenCV (cv2) is required for resize")
     
-    # Get interpolation method
+    # Get current image dimensions
+    h, w = img.shape[:2]
+    
+    # Get target dimensions
+    target_width = params.get("width")
+    target_height = params.get("height")
+    maintain_aspect = params.get("maintain_aspect", False)
+    
+    # Determine interpolation method
     interpolation_map = {
         "linear": cv2.INTER_LINEAR,
         "cubic": cv2.INTER_CUBIC,
@@ -245,27 +255,43 @@ def apply_resize(img, params):
     interpolation_str = params.get("interpolation", "linear").lower()
     interpolation = interpolation_map.get(interpolation_str, cv2.INTER_LINEAR)
     
-    # Get target dimensions
-    width = params.get("width")
-    height = params.get("height")
-    
-    # Get scale factors
-    fx = params.get("fx")
-    fy = params.get("fy")
-    
-    # Determine resize method
-    if width is not None and height is not None:
-        # Resize to exact dimensions
-        dsize = (int(width), int(height))
-        return cv2.resize(img, dsize, interpolation=interpolation)
-    elif fx is not None or fy is not None:
-        # Resize using scale factors
-        fx = fx if fx is not None else 1.0
-        fy = fy if fy is not None else fx  # If only fx provided, use same for fy
-        return cv2.resize(img, None, fx=fx, fy=fy, interpolation=interpolation)
-    else:
-        # No resize parameters provided, return original
+    # Calculate target dimensions
+    if target_width is None and target_height is None:
+        # No dimensions specified, return original
         return img
+    
+    if maintain_aspect:
+        # Calculate missing dimension to maintain aspect ratio
+        if target_width is None and target_height is not None:
+            # Calculate width from height
+            aspect_ratio = w / h
+            target_width = int(target_height * aspect_ratio)
+        elif target_height is None and target_width is not None:
+            # Calculate height from width
+            aspect_ratio = h / w
+            target_height = int(target_width * aspect_ratio)
+        elif target_width is not None and target_height is not None:
+            # Both specified, but maintain aspect - use the dimension that
+            # requires less scaling
+            scale_w = target_width / w
+            scale_h = target_height / h
+            scale = min(scale_w, scale_h)
+            target_width = int(w * scale)
+            target_height = int(h * scale)
+    else:
+        # Use exact dimensions (may distort aspect ratio)
+        if target_width is None:
+            target_width = w
+        if target_height is None:
+            target_height = h
+    
+    # Ensure dimensions are positive
+    target_width = max(1, target_width)
+    target_height = max(1, target_height)
+    
+    # Perform resize
+    return cv2.resize(img, (target_width, target_height), 
+                      interpolation=interpolation)
 
 
 # Operation registry
