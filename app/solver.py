@@ -104,7 +104,7 @@ def get_cache_info():
     }
 
 
-def solve_captcha(image, question, config, postprocess_steps=None):
+def solve_captcha(image, question, config, postprocess_profile=None):
     """
     Run YOLO model inference on image with optional postprocessing steps.
     
@@ -112,7 +112,7 @@ def solve_captcha(image, question, config, postprocess_steps=None):
         image: Image bytes or image array
         question: Question string for context
         config: Model configuration dict with 'model_id'
-        postprocess_steps: Dict with 'confidence_threshold' and 'iou_threshold' for NMS
+        postprocess_profile: Dict with 'steps' array (list of operations) or legacy dict with thresholds
     
     Returns:
         List of detection results, each with 'class', 'confidence', 'bbox' [x1, y1, x2, y2]
@@ -121,17 +121,30 @@ def solve_captcha(image, question, config, postprocess_steps=None):
     if not YOLO_AVAILABLE:
         return {'error': 'ultralytics library not available. Install with: pip install ultralytics'}
     
-    # Extract postprocess thresholds if provided
-    conf_threshold = 0.25  # Default
-    iou_threshold = 0.45   # Default
+    # Extract postprocess thresholds for YOLO inference
+    # Support both new format (steps array) and legacy format (direct thresholds dict)
+    conf_threshold = 0.7  # Default
+    iou_threshold = 0.5   # Default
     
-    if postprocess_steps:
-        conf_threshold = postprocess_steps.get('confidence_threshold', conf_threshold)
-        iou_threshold = postprocess_steps.get('iou_threshold', iou_threshold)
-    print("start solving captcha")
+    if postprocess_profile:
+        # Check if it's the new format (with 'steps' array)
+        if isinstance(postprocess_profile, dict) and 'steps' in postprocess_profile:
+            steps = postprocess_profile.get('steps', [])
+            if isinstance(steps, list):
+                # Look for 'nms' operation to extract thresholds
+                for step in steps:
+                    if isinstance(step, dict) and step.get('operation') == 'nms':
+                        params = step.get('params', {})
+                        conf_threshold = params.get('confidence_threshold', conf_threshold)
+                        iou_threshold = params.get('iou_threshold', iou_threshold)
+                        break
+        # Legacy format: direct thresholds dict
+        elif isinstance(postprocess_profile, dict):
+            conf_threshold = postprocess_profile.get('confidence_threshold', conf_threshold)
+            iou_threshold = postprocess_profile.get('iou_threshold', iou_threshold)
+   
     try:
-        print("in solver.py")
-        
+       
         # Get model_id from config
         model_id = config.get('model_id')
         if not model_id:
@@ -262,6 +275,20 @@ def solve_captcha(image, question, config, postprocess_steps=None):
                         'confidence': confidence,
                         'bbox': [float(x1), float(y1), float(x2), float(y2)]
                     })
+        
+        # Apply postprocessing steps if provided
+        if postprocess_profile:
+            try:
+                from .postprocess import apply_postprocess
+            except ImportError:
+                try:
+                    from app.postprocess import apply_postprocess
+                except ImportError:
+                    apply_postprocess = None
+            
+            # Apply modular postprocessing steps
+            if apply_postprocess:
+                detections = apply_postprocess(detections, postprocess_profile)
         
         # Return empty list with message if no detections, or return detections
         if len(detections) == 0:
