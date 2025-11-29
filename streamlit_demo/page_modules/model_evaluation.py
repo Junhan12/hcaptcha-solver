@@ -1,0 +1,493 @@
+"""
+Model Training Evaluation page.
+"""
+import streamlit as st
+import os
+import sys
+import tempfile
+import shutil
+import traceback
+import pandas as pd
+from datetime import datetime
+_this_dir = os.path.dirname(__file__)
+_parent_dir = os.path.abspath(os.path.join(_this_dir, '..'))
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
+
+from utils import (
+    list_models,
+    get_model_by_id,
+    get_preprocess_for_model,
+    get_postprocess_for_model,
+    upsert_model,
+    solve_captcha,
+    apply_preprocess,
+    load_validation_dataset,
+    evaluate_model,
+    PLOTLY_AVAILABLE,
+    go,
+)
+
+def render():
+    """Render the Model Training Evaluation page."""
+    st.header("Model Training Evaluation")
+    st.info("Select a model from MongoDB and evaluate it using ground truth annotations.")
+    
+    # Model selection
+    try:
+        models = list_models(limit=100)
+        if not models:
+            st.warning("No models found in MongoDB. Please create a model first in the 'Create and Upload Model' section.")
+        else:
+            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in models}
+        selected_model_name = st.selectbox(
+            "Select Model",
+            options=list(model_options.keys()),
+            key="model_eval_select"
+        )
+        selected_model_id = model_options[selected_model_name]
+        selected_model = get_model_by_id(selected_model_id)
+
+        if selected_model:
+            st.markdown("### Model Information")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Model ID", selected_model.get('model_id', 'N/A'))
+            with col2:
+                st.metric("Model Name", selected_model.get('model_name', 'N/A'))
+            with col3:
+                st.metric("Active", "Yes" if selected_model.get('is_active', False) else "No")
+
+            # Display existing metrics if available
+            existing_results = selected_model.get('results', {})
+            if existing_results:
+                st.markdown("#### Existing Metrics (from database)")
+                res_col1, res_col2, res_col3, res_col4, res_col5 = st.columns(5)
+                with res_col1:
+                    st.metric("Precision", f"{existing_results.get('precision', 0):.4f}" if existing_results.get('precision') else "N/A")
+                with res_col2:
+                    st.metric("Recall", f"{existing_results.get('recall', 0):.4f}" if existing_results.get('recall') else "N/A")
+                with res_col3:
+                    st.metric("F1 Score", f"{existing_results.get('f1_score', 0):.4f}" if existing_results.get('f1_score') else "N/A")
+                with res_col4:
+                    st.metric("mAP@0.5", f"{existing_results.get('mAP50', 0):.4f}" if existing_results.get('mAP50') else "N/A")
+                with res_col5:
+                    st.metric("mAP@0.5:0.95", f"{existing_results.get('AP5095', 0):.4f}" if existing_results.get('AP5095') else "N/A")
+
+            st.markdown("---")
+
+            # Dataset upload section
+            st.markdown("### Upload Dataset (Roboflow Format)")
+            with st.expander("📋 Dataset Format Instructions"):
+                st.markdown("""
+                **Roboflow Dataset Format:**
+
+                Upload a `data.yaml` file from a Roboflow dataset. The file should contain:
+
+                ```yaml
+                path: ../datasets/dataset_name
+                train: images/train
+                val: images/val
+                test: images/test
+                names:
+                  0: class1
+                  1: class2
+                  2: class3
+                nc: 3
+                ```
+
+                **Directory Structure:**
+                ```
+                dataset/
+                ├── data.yaml
+                ├── train/
+                │   ├── images/
+                │   └── labels/
+                ├── val/
+                │   ├── images/
+                │   └── labels/
+                └── test/
+                    ├── images/
+                    └── labels/
+                ```
+
+                **Note:** 
+                - The validation dataset will be used for evaluation
+                - Images should be in `val/images/` directory
+                - Annotations should be in YOLO format in `val/labels/` directory
+                - Annotation files should have the same name as images but with `.txt` extension
+                """)
+
+            st.info("Upload the data.yaml file from your Roboflow dataset. The validation split will be used for evaluation.")
+
+            data_yaml_file = st.file_uploader(
+                "Upload data.yaml file",
+                type=["yaml", "yml"],
+                key="data_yaml_upload_eval"
+            )
+
+            if data_yaml_file:
+                if st.button("Run Evaluation", key="run_eval_button"):
+                    with st.spinner("Loading validation dataset and running evaluation..."):
+                        import tempfile
+                        import shutil
+
+                        # Create temporary directory for dataset
+                        temp_dir = tempfile.mkdtemp()
+
+                        try:
+                                # Save data.yaml file
+                                data_yaml_path = os.path.join(temp_dir, "data.yaml")
+                                with open(data_yaml_path, 'wb') as f:
+                                    f.write(data_yaml_file.read())
+
+                                # Load validation dataset
+                                st.info("Loading validation dataset from data.yaml...")
+                                st.caption("⚠️ Note: The evaluation process is READ-ONLY. Your original dataset files will NOT be modified.")
+                                image_files, all_annotations, class_names = load_validation_dataset(data_yaml_path)
+
+                                if not image_files:
+                                    st.error("No validation images found. Please check your data.yaml file and dataset structure.")
+                                else:
+                                    st.success(f"Loaded {len(image_files)} validation images with annotations")
+
+                                    # Flatten annotations for evaluation
+                                    ground_truth = []
+                                    for annotations in all_annotations:
+                                        ground_truth.extend(annotations)
+
+                                    st.info(f"Total ground truth annotations: {len(ground_truth)}")
+
+                                    # Show ground truth class names from data.yaml
+                                    if class_names:
+                                        st.caption(f"📋 Ground truth classes from data.yaml: {sorted([class_names[i] for i in sorted(class_names.keys())])}")
+
+                                    # Prepare model config for direct inference (bypassing API validation)
+                                    model_config = {
+                                        'model_id': selected_model_id,
+                                        'model_name': selected_model.get('model_name', ''),
+                                    }
+
+                                    # Get preprocessing and postprocessing profiles for the selected model
+                                    preprocess_profile = get_preprocess_for_model(selected_model)
+                                    postprocess_profile_retrieved = get_postprocess_for_model(selected_model)
+
+                                    # Prepare postprocess profile for solve_captcha (full structure)
+                                    postprocess_profile = None
+                                    if postprocess_profile_retrieved:
+                                        postprocess_profile = {
+                                            'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
+                                            'name': postprocess_profile_retrieved.get('name'),
+                                            'steps': postprocess_profile_retrieved.get('steps', [])
+                                        }
+
+                                    # Run inference directly on validation images (no API, no validation)
+                                    all_predictions = []
+
+                                    progress_bar = st.progress(0)
+                                    status_text = st.empty()
+
+                                    for idx, img_path in enumerate(image_files):
+                                        status_text.text(f"Processing image {idx + 1}/{len(image_files)}: {os.path.basename(img_path)}")
+                                        progress_bar.progress((idx + 1) / len(image_files))
+
+                                        try:
+                                            # Read image file
+                                            with open(img_path, 'rb') as f:
+                                                img_bytes = f.read()
+
+                                            # Apply preprocessing if model has preprocess profile
+                                            processed_img_bytes = img_bytes
+                                            if preprocess_profile:
+                                                try:
+                                                    processed_img_bytes, _ = apply_preprocess(img_bytes, preprocess_profile)
+                                                except Exception as e:
+                                                    st.warning(f"Preprocessing failed for {os.path.basename(img_path)}: {e}")
+                                                    processed_img_bytes = img_bytes
+
+                                            # Run inference directly using solve_captcha (bypasses question/challenge_type validation)
+                                            # Pass empty question since we're bypassing validation
+                                            inference_result = solve_captcha(
+                                                processed_img_bytes,
+                                                question="",  # Empty question - bypasses validation
+                                                config=model_config,
+                                                postprocess_profile=postprocess_profile
+                                            )
+
+                                            # Handle inference result
+                                            if isinstance(inference_result, dict):
+                                                if 'error' in inference_result:
+                                                    st.warning(f"Inference error for {os.path.basename(img_path)}: {inference_result['error']}")
+                                                    continue
+                                                elif 'message' in inference_result:
+                                                    # No detections
+                                                    detections = []
+                                                else:
+                                                    detections = inference_result
+                                            elif isinstance(inference_result, list):
+                                                detections = inference_result
+                                            else:
+                                                detections = []
+
+                                            # Add image identifier to each detection
+                                            for det in detections:
+                                                if isinstance(det, dict):
+                                                    det['image_id'] = os.path.basename(img_path)
+
+                                            all_predictions.extend(detections)
+                                        except Exception as e:
+                                            st.warning(f"Failed to run inference on {os.path.basename(img_path)}: {e}")
+                                            import traceback
+                                            st.code(traceback.format_exc())
+
+                                    progress_bar.empty()
+                                    status_text.empty()
+
+                                    if all_predictions:
+                                        st.success(f"Generated {len(all_predictions)} predictions from {len(image_files)} validation images")
+
+                                        # Debug: Show class names from predictions and ground truth
+                                        pred_classes = set([p.get('class', '') for p in all_predictions if isinstance(p, dict)])
+                                        gt_classes = set([g.get('class', '') for g in ground_truth if isinstance(g, dict)])
+
+                                        with st.expander("🔍 Debug: Class Name Comparison"):
+                                            st.write("**Prediction Classes:**", sorted(pred_classes))
+                                            st.write("**Ground Truth Classes:**", sorted(gt_classes))
+                                            st.write("**Matching Classes:**", sorted(pred_classes & gt_classes))
+                                            st.write("**Only in Predictions:**", sorted(pred_classes - gt_classes))
+                                            st.write("**Only in Ground Truth:**", sorted(gt_classes - pred_classes))
+
+                                        # Create class mapping if needed (map model class names to ground truth class names)
+                                        # This handles cases where model uses different class names than ground truth
+                                        class_mapping = {}
+                                        if pred_classes != gt_classes:
+                                            st.warning("⚠️ Class name mismatch detected! Attempting automatic mapping...")
+                                            # Try to match by similarity (case-insensitive, underscore/space normalization)
+                                            for pred_class in pred_classes:
+                                                pred_normalized = pred_class.lower().replace('_', ' ').replace('-', ' ')
+                                                for gt_class in gt_classes:
+                                                    gt_normalized = gt_class.lower().replace('_', ' ').replace('-', ' ')
+                                                    if pred_normalized == gt_normalized:
+                                                        class_mapping[pred_class] = gt_class
+                                                        break
+
+                                            if class_mapping:
+                                                st.info(f"✅ Created class mapping: {class_mapping}")
+                                            else:
+                                                st.error("❌ Could not automatically map class names. Please ensure model and dataset use the same class names.")
+
+                                        # Run evaluation with class mapping
+                                        eval_results = evaluate_model(
+                                            all_predictions,
+                                            ground_truth,
+                                            iou_threshold=0.5,
+                                            class_mapping=class_mapping if class_mapping else None
+                                        )
+
+                                        # Display overall metrics
+                                        st.markdown("### Overall Evaluation Metrics")
+                                        overall = eval_results['overall_metrics']
+
+                                        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+                                        with metric_col1:
+                                            st.metric("mAP@0.5", f"{overall['map_50']:.4f}")
+                                        with metric_col2:
+                                            st.metric("mAP@0.5:0.95", f"{overall['map_50_95']:.4f}")
+                                        with metric_col3:
+                                            st.metric("Total TP", overall['total_tp'])
+                                        with metric_col4:
+                                            st.metric("Total FP", overall['total_fp'])
+                                        with metric_col5:
+                                            st.metric("Total FN", overall['total_fn'])
+
+                                        # Calculate macro-averaged precision, recall, and F1 from per-class metrics
+                                        per_class = eval_results['per_class_metrics']
+                                        macro_precision = 0.0
+                                        macro_recall = 0.0
+                                        macro_f1 = 0.0
+                                        if per_class:
+                                            precisions = [m['precision'] for m in per_class.values()]
+                                            recalls = [m['recall'] for m in per_class.values()]
+                                            f1_scores = [m['f1_score'] for m in per_class.values()]
+                                            macro_precision = sum(precisions) / len(precisions) if precisions else 0.0
+                                            macro_recall = sum(recalls) / len(recalls) if recalls else 0.0
+                                            macro_f1 = sum(f1_scores) / len(f1_scores) if f1_scores else 0.0
+
+                                        # Prepare results for database update
+                                        # Format matches expected structure: {precision, recall, f1_score, mAP50, AP5095}
+                                        db_results = {
+                                            'precision': macro_precision,
+                                            'recall': macro_recall,
+                                            'f1_score': macro_f1,
+                                            'mAP50': overall['map_50'],
+                                            'AP5095': overall['map_50_95'],
+                                            'total_tp': overall['total_tp'],
+                                            'total_fp': overall['total_fp'],
+                                            'total_fn': overall['total_fn'],
+                                            'evaluation_timestamp': datetime.now().isoformat(),
+                                            'per_class_metrics': per_class  # Store detailed per-class metrics
+                                        }
+
+                                        # Update model in database with evaluation results
+                                        try:
+                                            updated_model = upsert_model(
+                                                model_id=selected_model_id,
+                                                model_name=selected_model.get('model_name', ''),
+                                                weights_file_stream=None,  # Don't update weights
+                                                results=db_results,
+                                                is_active=selected_model.get('is_active', False)  # Preserve is_active status
+                                            )
+                                            if updated_model:
+                                                st.success("✅ Evaluation results saved to database!")
+                                            else:
+                                                st.warning("⚠️ Could not save evaluation results to database. Please check database connection.")
+                                        except Exception as e:
+                                            st.error(f"❌ Error saving evaluation results: {e}")
+                                            import traceback
+                                            st.code(traceback.format_exc())
+
+                                        # Per-class metrics table
+                                        st.markdown("### Per-Class Metrics")
+                                        per_class = eval_results['per_class_metrics']
+
+                                        if per_class:
+                                            class_data = []
+                                            for class_name, metrics in per_class.items():
+                                                class_data.append({
+                                                    'Class': class_name,
+                                                    'Precision': f"{metrics['precision']:.4f}",
+                                                    'Recall': f"{metrics['recall']:.4f}",
+                                                    'F1 Score': f"{metrics['f1_score']:.4f}",
+                                                    'AP@0.5': f"{metrics['ap_50']:.4f}",
+                                                    'TP': metrics['tp'],
+                                                    'FP': metrics['fp'],
+                                                    'FN': metrics['fn']
+                                                })
+
+                                            df_metrics = pd.DataFrame(class_data)
+                                            st.dataframe(df_metrics, width='stretch')
+
+                                            # Per-class metrics charts
+                                            st.markdown("#### Per-Class Metrics Visualization")
+
+                                            if PLOTLY_AVAILABLE:
+                                                classes = list(per_class.keys())
+                                                precisions = [per_class[c]['precision'] for c in classes]
+                                                recalls = [per_class[c]['recall'] for c in classes]
+                                                f1_scores = [per_class[c]['f1_score'] for c in classes]
+
+                                                # Precision, Recall, F1 chart
+                                                fig_prf = go.Figure()
+                                                fig_prf.add_trace(go.Bar(
+                                                    name='Precision',
+                                                    x=classes,
+                                                    y=precisions,
+                                                    marker_color='lightblue'
+                                                ))
+                                                fig_prf.add_trace(go.Bar(
+                                                    name='Recall',
+                                                    x=classes,
+                                                    y=recalls,
+                                                    marker_color='lightgreen'
+                                                ))
+                                                fig_prf.add_trace(go.Bar(
+                                                    name='F1 Score',
+                                                    x=classes,
+                                                    y=f1_scores,
+                                                    marker_color='lightcoral'
+                                                ))
+                                                fig_prf.update_layout(
+                                                    title='Per-Class Precision, Recall, and F1 Score',
+                                                    xaxis_title='Class',
+                                                    yaxis_title='Score',
+                                                    barmode='group',
+                                                    height=400
+                                                )
+                                                st.plotly_chart(fig_prf, use_container_width=True)
+
+                                                # AP@0.5 chart
+                                                fig_ap = go.Figure()
+                                                aps = [per_class[c]['ap_50'] for c in classes]
+                                                fig_ap.add_trace(go.Bar(
+                                                    x=classes,
+                                                    y=aps,
+                                                    marker_color='steelblue'
+                                                ))
+                                                fig_ap.update_layout(
+                                                    title='Per-Class AP@0.5',
+                                                    xaxis_title='Class',
+                                                    yaxis_title='AP@0.5',
+                                                    height=400
+                                                )
+                                                st.plotly_chart(fig_ap, use_container_width=True)
+
+                                                # TP, FP, FN chart
+                                                fig_counts = go.Figure()
+                                                tps = [per_class[c]['tp'] for c in classes]
+                                                fps = [per_class[c]['fp'] for c in classes]
+                                                fns = [per_class[c]['fn'] for c in classes]
+                                                fig_counts.add_trace(go.Bar(
+                                                    name='True Positives',
+                                                    x=classes,
+                                                    y=tps,
+                                                    marker_color='green'
+                                                ))
+                                                fig_counts.add_trace(go.Bar(
+                                                    name='False Positives',
+                                                    x=classes,
+                                                    y=fps,
+                                                    marker_color='red'
+                                                ))
+                                                fig_counts.add_trace(go.Bar(
+                                                    name='False Negatives',
+                                                    x=classes,
+                                                    y=fns,
+                                                    marker_color='orange'
+                                                ))
+                                                fig_counts.update_layout(
+                                                    title='Per-Class Detection Counts (TP, FP, FN)',
+                                                    xaxis_title='Class',
+                                                    yaxis_title='Count',
+                                                    barmode='group',
+                                                    height=400
+                                                )
+                                                st.plotly_chart(fig_counts, use_container_width=True)
+
+                                                # Overall metrics summary chart
+                                                st.markdown("#### Overall Metrics Summary")
+                                                summary_fig = go.Figure()
+                                                summary_fig.add_trace(go.Bar(
+                                                    x=['mAP@0.5', 'mAP@0.5:0.95'],
+                                                    y=[overall['map_50'], overall['map_50_95']],
+                                                    marker_color='purple',
+                                                    text=[f"{overall['map_50']:.4f}", f"{overall['map_50_95']:.4f}"],
+                                                    textposition='auto'
+                                                ))
+                                                summary_fig.update_layout(
+                                                    title='Overall mAP Metrics',
+                                                    xaxis_title='Metric',
+                                                    yaxis_title='Score',
+                                                    height=400
+                                                )
+                                                st.plotly_chart(summary_fig, use_container_width=True)
+                                            else:
+                                                st.info("📊 Install plotly to view interactive charts: `pip install plotly`")
+                                        else:
+                                            st.warning("No per-class metrics available.")
+                                    else:
+                                        st.error("No predictions generated. Please check your validation images and model configuration.")
+
+                        except Exception as e:
+                            st.error(f"Evaluation failed: {e}")
+                            import traceback
+                            st.code(traceback.format_exc())
+                        finally:
+                            # Cleanup temporary directory
+                            if 'temp_dir' in locals():
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+    except Exception as e:
+        st.error(f"Error loading models: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
