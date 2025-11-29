@@ -1,254 +1,63 @@
-from __future__ import annotations
-
-import argparse
-import random
-import sys
+import os
+import cv2
+import glob
+import albumentations as A
+import numpy as np
 import shutil
-from pathlib import Path
-from typing import Iterable, List, Sequence
 
-from PIL import Image, ImageEnhance
+# Define augmentation pipeline
+transform = A.Compose([
+    A.HorizontalFlip(p=0.5),
+    A.RandomRotate90(p=1.0),  # clockwise/counterclockwise 90°
+    A.Rotate(limit=15, p=0.7),  # random -15° to +15°
+    A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.0, p=0.7),  # -20% to +20% brightness
+    A.Exposure(p=0.7, exposure_limit=(-0.1, 0.1)),  # -10% to +10% exposure
+], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
 
-# =========================
-# USER CONFIG (YOLO DATASET)
-# =========================
+def augment_and_save(images_dir, labels_dir, save_images_dir, save_labels_dir, n_aug=3):
+    os.makedirs(save_images_dir, exist_ok=True)
+    os.makedirs(save_labels_dir, exist_ok=True)
+    image_files = sorted(glob.glob(os.path.join(images_dir, '*.jpg')))
+    for img_path in image_files:
+        filename = os.path.basename(img_path)
+        label_path = os.path.join(labels_dir, filename.replace('.jpg', '.txt'))
 
-DATASET_ROOT = Path(r"C:\Users\User\Downloads\FYP.v13i.yolov8")
-
-# Only augment the training split by default
-DEFAULT_SPLITS: Sequence[str] = ("train",)
-
-DEFAULT_NUM_OUTPUTS = 3
-
-
-def _random_small_rotation(image: Image.Image, rng: random.Random) -> Image.Image:
-    """Rotate image by a random angle between -15° and +15°."""
-    angle = rng.uniform(-15.0, 15.0)
-    return image.rotate(angle, resample=Image.BICUBIC, expand=False)
-
-
-def _adjust_brightness(image: Image.Image, rng: random.Random) -> Image.Image:
-    """Adjust brightness between -15% and +15%."""
-    factor = 1.0 + rng.uniform(-0.15, 0.15)
-    enhancer = ImageEnhance.Brightness(image)
-    return enhancer.enhance(factor)
-
-
-def _adjust_exposure(image: Image.Image, rng: random.Random) -> Image.Image:
-    """Adjust exposure/contrast between -10% and +10%."""
-    factor = 1.0 + rng.uniform(-0.10, 0.10)
-    enhancer = ImageEnhance.Contrast(image)
-    return enhancer.enhance(factor)
-
-
-def augment_image(
-    image: Image.Image,
-    num_outputs: int = 3,
-    *,
-    seed: int | None = None,
-) -> List[Image.Image]:
-    """
-    Generate multiple augmented versions of the provided image.
-
-    Args:
-        image: Pillow image to augment.
-        num_outputs: Number of augmented samples to return (default: 3).
-        seed: Optional random seed for reproducibility.
-
-    Returns:
-        List of augmented Pillow images.
-    """
-    rng = random.Random(seed)
-    outputs: List[Image.Image] = []
-
-    for _ in range(num_outputs):
-        aug = image.copy()
-        aug = _random_small_rotation(aug, rng)
-        aug = _adjust_brightness(aug, rng)
-        aug = _adjust_exposure(aug, rng)
-        outputs.append(aug)
-
-    return outputs
-
-
-def _iter_images(paths: Iterable[Path]) -> Iterable[Path]:
-    """Yield image file paths from the provided iterable."""
-    supported = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
-
-    for path in paths:
-        if path.is_dir():
-            for nested in sorted(path.rglob("*")):
-                if nested.suffix.lower() in supported:
-                    yield nested
-        elif path.suffix.lower() in supported:
-            yield path
-
-
-# ========== YOLO DATASET MODE (images + labels in train folder) ==========
-
-def augment_yolo_split(
-    dataset_root: Path,
-    split: str = "train",
-    num_outputs: int = DEFAULT_NUM_OUTPUTS,
-    seed: int | None = None,
-) -> None:
-    """
-    Augment a YOLO split (e.g., 'train') by creating new images and
-    copying the corresponding label files with new names.
-
-    Reads from:
-        <root>/<split>/images
-        <root>/<split>/labels
-
-    Writes augmented images and labels back into those SAME folders.
-    """
-    rng = random.Random(seed)
-
-    images_dir = dataset_root / split / "images"
-    labels_dir = dataset_root / split / "labels"
-
-    if not images_dir.exists() or not labels_dir.exists():
-        print(f"[WARN] Split '{split}' is missing images/labels. Skipping.")
-        return
-
-    print(f"[INFO] Augmenting YOLO split '{split}'")
-    print(f"       Images dir: {images_dir}")
-    print(f"       Labels dir: {labels_dir}")
-
-    aug_count = 0
-
-    for image_path in _iter_images([images_dir]):
-        stem = image_path.stem
-        label_path = labels_dir / f"{stem}.txt"
-
-        if not label_path.exists():
-            print(f"[WARN] No label for image {image_path.name} ({label_path.name}), skipping.")
+        # Read image and labels
+        image = cv2.imread(img_path)
+        h, w = image.shape[:2]
+        if not os.path.exists(label_path):
             continue
+        with open(label_path, 'r') as f:
+            lines = f.read().splitlines()
+        bboxes, class_labels = [], []
+        for line in lines:
+            cls, xc, yc, bw, bh = map(float, line.split())
+            bboxes.append([xc, yc, bw, bh])
+            class_labels.append(int(cls))
 
-        with Image.open(image_path) as img:
-            img = img.convert("RGB")
+        # Save original
+        shutil.copy(img_path, os.path.join(save_images_dir, filename))
+        shutil.copy(label_path, os.path.join(save_labels_dir, filename.replace('.jpg', '.txt')))
 
-            # one random seed per original image to vary augmentations
-            base_seed = rng.randint(0, 10_000_000)
+        # Augment and save
+        for i in range(n_aug):
+            transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
+            out_img = transformed['image']
+            out_boxes = transformed['bboxes']
+            out_labels = transformed['class_labels']
+            out_img_name = f"{filename[:-4]}_aug{i+1}.jpg"
+            out_label_name = f"{filename[:-4]}_aug{i+1}.txt"
 
-            for idx in range(1, num_outputs + 1):
-                sample_seed = base_seed + idx
-                aug_list = augment_image(img, num_outputs=1, seed=sample_seed)
-                aug = aug_list[0]
+            cv2.imwrite(os.path.join(save_images_dir, out_img_name), out_img)
+            with open(os.path.join(save_labels_dir, out_label_name), 'w') as f:
+                for l, b in zip(out_labels, out_boxes):
+                    f.write(f"{l} {' '.join(map(str, b))}\n")
 
-                new_stem = f"{stem}_aug{idx}"
-                new_img_path = images_dir / f"{new_stem}{image_path.suffix}"
-                new_label_path = labels_dir / f"{new_stem}.txt"
-
-                # Save augmented image
-                aug.save(new_img_path)
-
-                # Copy original label file (we keep same bboxes; small rotation is tolerated)
-                shutil.copy2(label_path, new_label_path)
-
-                aug_count += 1
-                print(f"[OK] Saved {new_img_path.name} and {new_label_path.name}")
-
-    print(f"[INFO] Done augmenting '{split}'. Generated {aug_count} augmented images + labels.")
-
-
-def augment_yolo_dataset(
-    dataset_root: Path,
-    splits: Sequence[str] = DEFAULT_SPLITS,
-    num_outputs: int = DEFAULT_NUM_OUTPUTS,
-    seed: int | None = None,
-) -> None:
-    """Augment all specified YOLO splits (usually just 'train')."""
-    for split in splits:
-        augment_yolo_split(dataset_root, split=split, num_outputs=num_outputs, seed=seed)
-
-
-# ========== ORIGINAL CLI MODE (images only, NO labels) ==========
-
-def process_images(
-    inputs: Sequence[str],
-    output_dir: str,
-    num_outputs: int = 3,
-    seed: int | None = None,
-) -> None:
-    """Augment every image resolved from `inputs` and save results into `output_dir` (no labels)."""
-    rng = random.Random(seed)
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    for image_path in _iter_images([Path(p) for p in inputs]):
-        with Image.open(image_path) as img:
-            img = img.convert("RGB")
-            sample_seed = rng.randint(0, 10_000_000)
-            augmented = augment_image(img, num_outputs=num_outputs, seed=sample_seed)
-
-            for idx, aug in enumerate(augmented, start=1):
-                save_name = f"{image_path.stem}_aug{idx}.png"
-                aug.save(output_path / save_name, format="PNG")
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Generate data augmentations matching the specified recipe."
-    )
-    parser.add_argument(
-        "inputs",
-        nargs="+",
-        help="Image files or directories containing images.",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        required=True,
-        help="Directory where augmented images will be written.",
-    )
-    parser.add_argument(
-        "--num-outputs",
-        "-n",
-        type=int,
-        default=3,
-        help="Number of augmented samples per original image (default: 3).",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Optional base random seed for reproducibility.",
-    )
-    return parser
-
-
-def main() -> None:
-    # If no CLI args provided (other than script name), use YOLO DATASET MODE
-    if len(sys.argv) == 1:
-        if not DATASET_ROOT.exists():
-            raise FileNotFoundError(
-                f"DATASET_ROOT does not exist. Please update DATASET_ROOT in {__file__}"
-            )
-
-        augment_yolo_dataset(
-            dataset_root=DATASET_ROOT,
-            splits=DEFAULT_SPLITS,
-            num_outputs=DEFAULT_NUM_OUTPUTS,
-            seed=None,
-        )
-
-        print("[INFO] YOLO augmentation complete using configured DATASET_ROOT.")
-        return
-
-    # CLI mode: image-only augmentation (no labels)
-    parser = _build_parser()
-    args = parser.parse_args()
-
-    process_images(
-        args.inputs,
-        args.output,
-        num_outputs=args.num_outputs,
-        seed=args.seed,
-    )
-
-
-if __name__ == "__main__":
-    main()
-
-
+# Usage example:
+augment_and_save(
+    images_dir="C:/Users/junha/Downloads/unpaired shape.v12-general-shape-aug.yolov8/train/images/",
+    labels_dir="C:/Users/junha/Downloads/unpaired shape.v12-general-shape-aug.yolov8/train/labels/",
+    save_images_dir="C:/Users/junha/Downloads/unpaired shape.v12-general-shape-aug.yolov8/train/images/aug_images/",
+    save_labels_dir="C:/Users/junha/Downloads/unpaired shape.v12-general-shape-aug.yolov8/train/labels/aug_labels/",
+    n_aug=3  # number of augmentations per original
+)
