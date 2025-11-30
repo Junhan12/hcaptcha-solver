@@ -23,7 +23,7 @@ from utils import (
 def render(progress, status):
     """Render the Auto Crawler, Solver, and Clicker page."""
     # Use existing "Crawl -> API" functionality
-    if st.button("Crawl Demo Site And Send To API", key="crawl_demo_button"):
+    if st.button("Crawl Demo Site And Solve Challenges", key="crawl_demo_button"):
         status.info("Launching browser and crawling demo site...")
         progress.progress(10)
         start = time.time()
@@ -798,6 +798,6 @@ def render(progress, status):
                         if idx < len(accepted) - 1:
                             st.markdown("---")
         else:
-            st.warning("Crawl finished but no images were sent.")
+            st.warning("Crawl finished. No matched challenge type found for the challenge.")
         st.info(f"Elapsed: {elapsed:.2f}s")
         progress.progress(100)

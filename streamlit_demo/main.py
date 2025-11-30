@@ -11,6 +11,7 @@ from page_modules import (
     view_eda,
     data_preprocessing,
     data_augmentation,
+    model_train,
     create_model,
     model_evaluation,
     demo_upload_inference,
@@ -32,20 +33,21 @@ main_section = st.sidebar.selectbox(
         "2. View EDA",
         "3. Data Preprocessing",
         "4. Data Augmentation",
-        "5. Create and Upload Model",
-        "6. Model Training Evaluation",
-        "7. hCAPTCHA Demo",
+        "5. Model Training",
+        "6. Create and Upload Model",
+        "7. Model Training Evaluation",
+        "8. hCAPTCHA Demo",
     ),
 )
 
 # Sub-navigation for hCAPTCHA Demo section
 demo_subsection = None
-if main_section == "7. hCAPTCHA Demo":
+if main_section == "8. hCAPTCHA Demo":
     demo_subsection = st.sidebar.radio(
         "Demo Options",
         (
-            "7a. Upload Image for Inference",
-            "7b. Auto Crawler, Solver, and Clicker",
+            "8a. Upload Image for Inference",
+            "8b. Auto Crawler, Solver, and Clicker",
         ),
     )
 
@@ -61,13 +63,15 @@ elif main_section == "3. Data Preprocessing":
     data_preprocessing.render()
 elif main_section == "4. Data Augmentation":
     data_augmentation.render()
-elif main_section == "5. Create and Upload Model":
+elif main_section == "5. Model Training":
+    model_train.render()
+elif main_section == "6. Create and Upload Model":
     create_model.render()
-elif main_section == "6. Model Training Evaluation":
+elif main_section == "7. Model Training Evaluation":
     model_evaluation.render()
-elif main_section == "7. hCAPTCHA Demo":
-    if demo_subsection == "7a. Upload Image for Inference":
+elif main_section == "8. hCAPTCHA Demo":
+    if demo_subsection == "8a. Upload Image for Inference":
         demo_upload_inference.render(progress, status)
-    elif demo_subsection == "7b. Auto Crawler, Solver, and Clicker":
+    elif demo_subsection == "8b. Auto Crawler, Solver, and Clicker":
         demo_crawler_solver.render(progress, status)
 
