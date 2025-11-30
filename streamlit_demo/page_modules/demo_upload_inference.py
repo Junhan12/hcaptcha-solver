@@ -22,7 +22,7 @@ def render(progress, status):
     # Use existing "Upload -> API" functionality
     uploaded_img = st.file_uploader("Upload hCAPTCHA Image", type=["jpg", "jpeg", "png"])
     question = st.text_input("Enter hCAPTCHA Question")
-    if st.button("Send to API"):
+    if st.button("Send For Inference"):
         if uploaded_img and question:
             status.info("Uploading...")
             time.sleep(0.2)
@@ -97,41 +97,83 @@ def render(progress, status):
                         st.warning("No processed image available")
 
                 with col2:
-                    # Display preprocessing info
+                    # Display model info
+                    model = out.get("model")
+                    if model:
+                        st.info(f"**Model:** {model.get('model_name', 'N/A')}")
+                        st.caption(f"Model ID: {model.get('model_id', 'N/A')}")
+                    else:
+                        st.info("**Model:** N/A")
+                        st.caption("No model information available")
+                    
+                    st.markdown("---")
+                    
+                    # Display preprocessing info (always visible)
                     preprocess = out.get("preprocess")
                     if preprocess:
-                        st.info(f"**Preprocessing:** {preprocess.get('preprocess_id', 'N/A')}")
-                        if preprocess.get('applied_steps'):
-                            st.caption(f"Steps: {', '.join([step.get('operation', '') for step in preprocess.get('applied_steps', [])])}")
-
-                    # Display postprocessing info
+                        preprocess_id = preprocess.get('preprocess_id', 'N/A')
+                        st.info(f"**Preprocessing:** {preprocess_id}")
+                        applied_steps = preprocess.get('applied_steps', [])
+                        if applied_steps:
+                            step_names = [step.get('operation', '') for step in applied_steps if isinstance(step, dict)]
+                            if step_names:
+                                st.caption(f"Steps: {', '.join(step_names)}")
+                            else:
+                                st.caption("No preprocessing step is applied")
+                        else:
+                            st.caption("No preprocessing step is applied")
+                    else:
+                        st.info("**Preprocessing:** N/A")
+                        st.caption("No preprocessing step is applied")
+                    
+                    st.markdown("---")
+                    
+                    # Display postprocessing info (always visible)
                     postprocess = out.get("postprocess")
                     if postprocess:
+                        postprocess_name = postprocess.get('name', 'N/A')
+                        postprocess_id = postprocess.get('postprocess_id', 'N/A')
+                        st.info(f"**Postprocessing:** {postprocess_name}")
+                        if postprocess_id and postprocess_id != 'N/A':
+                            st.caption(f"Postprocess ID: {postprocess_id}")
+                        
                         steps = postprocess.get('steps', [])
                         # Extract thresholds from nms operation if present
                         conf_thresh = 'N/A'
                         iou_thresh = 'N/A'
-                        if isinstance(steps, list):
+                        if isinstance(steps, list) and len(steps) > 0:
+                            operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
+                            if operations:
+                                st.caption(f"Operations: {', '.join(operations)}")
+                            else:
+                                st.caption("No postprocessing step is applied")
+                            
+                            # Extract thresholds from nms operation if present
                             for step in steps:
                                 if isinstance(step, dict) and step.get('operation') == 'nms':
                                     params = step.get('params', {})
                                     conf_thresh = params.get('confidence_threshold', 'N/A')
                                     iou_thresh = params.get('iou_threshold', 'N/A')
                                     break
+                            
+                            if conf_thresh != 'N/A' or iou_thresh != 'N/A':
+                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
                         elif isinstance(steps, dict):
                             # Legacy format support
                             conf_thresh = steps.get('confidence_threshold', 'N/A')
                             iou_thresh = steps.get('iou_threshold', 'N/A')
-
-                        st.info(f"**Postprocessing:** {postprocess.get('name', 'N/A')}")
-                        if isinstance(steps, list) and len(steps) > 0:
-                            operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
-                            st.caption(f"Operations: {', '.join(operations)}")
                             if conf_thresh != 'N/A' or iou_thresh != 'N/A':
                                 st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                            else:
+                                st.caption("No postprocessing step is applied")
                         else:
-                            st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
-
+                            st.caption("No postprocessing step is applied")
+                    else:
+                        st.info("**Postprocessing:** N/A")
+                        st.caption("No postprocessing step is applied")
+                    
+                    st.markdown("---")
+                    
                     # Display performance
                     st.metric("Processing Time", f"{out.get('perform_time', 0):.3f}s")
 
