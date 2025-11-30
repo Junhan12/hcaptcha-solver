@@ -24,7 +24,7 @@ def _bytes_to_cv2_image(img_bytes):
     return img
 
 
-def _cv2_image_to_bytes(img_cv2, format='PNG'):
+def _cv2_image_to_bytes(img_cv2, format='JPG'):
     """Convert OpenCV image (numpy array) back to bytes."""
     if not CV2_AVAILABLE:
         raise ImportError("OpenCV (cv2) is required for preprocessing")
@@ -359,7 +359,7 @@ def apply_preprocess(img_bytes, preprocess_profile):
                 continue
         
         # Convert back to bytes
-        processed_bytes = _cv2_image_to_bytes(img, format='PNG')
+        processed_bytes = _cv2_image_to_bytes(img, format='JPG')
         return processed_bytes, applied
         
     except Exception as e:
