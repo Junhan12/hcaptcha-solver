@@ -283,6 +283,11 @@ def render():
                                             iou_threshold=0.5,
                                             class_mapping=class_mapping if class_mapping else None
                                         )
+                                        
+                                        # Store predictions and ground truth for curve generation
+                                        eval_results['all_predictions'] = all_predictions
+                                        eval_results['ground_truth'] = ground_truth
+                                        eval_results['class_mapping'] = class_mapping if class_mapping else None
 
                                         # Display overall metrics
                                         st.markdown("### Overall Evaluation Metrics")
@@ -470,6 +475,381 @@ def render():
                                                     height=400
                                                 )
                                                 st.plotly_chart(summary_fig, use_container_width=True)
+                                                
+                                                # Advanced Evaluation Curves
+                                                st.markdown("---")
+                                                st.markdown("### Advanced Evaluation Curves")
+                                                
+                                                # Generate curves
+                                                from app.evaluator import match_predictions_to_ground_truth, calculate_precision_recall_f1
+                                                import numpy as np
+                                                
+                                                # Get all unique classes
+                                                all_classes = set()
+                                                for pred in all_predictions:
+                                                    class_name = pred.get('class', '')
+                                                    if class_mapping and class_name in class_mapping:
+                                                        class_name = class_mapping[class_name]
+                                                    if class_name:
+                                                        all_classes.add(class_name)
+                                                for gt in ground_truth:
+                                                    class_name = gt.get('class', '')
+                                                    if class_name:
+                                                        all_classes.add(class_name)
+                                                
+                                                # Confidence thresholds for curves
+                                                conf_thresholds = np.arange(0.0, 1.01, 0.01)
+                                                
+                                                # 1. Precision-Recall Curve
+                                                st.markdown("#### Precision-Recall Curve")
+                                                pr_fig = go.Figure()
+                                                
+                                                # Calculate PR curve for each class
+                                                class_aps = {}
+                                                for class_name in sorted(all_classes):
+                                                    precisions = []
+                                                    recalls = []
+                                                    
+                                                    for conf_thresh in conf_thresholds:
+                                                        # Filter predictions by confidence threshold
+                                                        filtered_preds = [
+                                                        p for p in all_predictions
+                                                        if p.get('confidence', 0) >= conf_thresh
+                                                        and (class_mapping.get(p.get('class', ''), p.get('class', '')) if class_mapping else p.get('class', '')) == class_name
+                                                    ]
+                                                        
+                                                        # Match predictions to ground truth
+                                                        tp, fp, fn = match_predictions_to_ground_truth(
+                                                            filtered_preds,
+                                                            [g for g in ground_truth if g.get('class') == class_name],
+                                                            iou_threshold=0.5,
+                                                            class_mapping=class_mapping
+                                                        )
+                                                        
+                                                        # Calculate precision and recall
+                                                        tp_count = len([x for x in tp if x.get('class') == class_name])
+                                                        fp_count = len([x for x in fp if x.get('class') == class_name])
+                                                        fn_count = len([x for x in fn if x.get('class') == class_name])
+                                                        
+                                                        precision = tp_count / (tp_count + fp_count) if (tp_count + fp_count) > 0 else 0.0
+                                                        recall = tp_count / (tp_count + fn_count) if (tp_count + fn_count) > 0 else 0.0
+                                                        
+                                                        precisions.append(precision)
+                                                        recalls.append(recall)
+                                                    
+                                                    # Calculate AP (Area Under PR Curve)
+                                                    ap = np.trapz(precisions, recalls) if len(recalls) > 1 and len(precisions) > 1 else 0.0
+                                                    class_aps[class_name] = ap
+                                                    
+                                                    # Add trace for this class
+                                                    pr_fig.add_trace(go.Scatter(
+                                                        x=recalls,
+                                                        y=precisions,
+                                                        mode='lines',
+                                                        name=f"{class_name} (AP={ap:.3f})",
+                                                        line=dict(width=2)
+                                                    ))
+                                                
+                                                # Add overall mAP curve
+                                                overall_precisions = []
+                                                overall_recalls = []
+                                                for conf_thresh in conf_thresholds:
+                                                    filtered_preds = [p for p in all_predictions if p.get('confidence', 0) >= conf_thresh]
+                                                    tp, fp, fn = match_predictions_to_ground_truth(
+                                                        filtered_preds, ground_truth, iou_threshold=0.5, class_mapping=class_mapping
+                                                    )
+                                                    total_tp = len(tp)
+                                                    total_fp = len(fp)
+                                                    total_fn = len(fn)
+                                                    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+                                                    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+                                                    overall_precisions.append(precision)
+                                                    overall_recalls.append(recall)
+                                                
+                                                map_50 = overall['map_50']
+                                                pr_fig.add_trace(go.Scatter(
+                                                    x=overall_recalls,
+                                                    y=overall_precisions,
+                                                    mode='lines',
+                                                    name=f"all classes (mAP@0.5={map_50:.3f})",
+                                                    line=dict(width=3, color='black')
+                                                ))
+                                                
+                                                pr_fig.update_layout(
+                                                    title='Precision-Recall Curve',
+                                                    xaxis_title='Recall',
+                                                    yaxis_title='Precision',
+                                                    xaxis=dict(range=[0, 1]),
+                                                    yaxis=dict(range=[0, 1]),
+                                                    height=500,
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                )
+                                                st.plotly_chart(pr_fig, use_container_width=True)
+                                                
+                                                # 2. F1-Confidence Curve
+                                                st.markdown("#### F1-Confidence Curve")
+                                                f1_fig = go.Figure()
+                                                
+                                                for class_name in sorted(all_classes):
+                                                    f1_scores = []
+                                                    for conf_thresh in conf_thresholds:
+                                                        filtered_preds = [
+                                                            p for p in all_predictions
+                                                            if p.get('confidence', 0) >= conf_thresh
+                                                            and (class_mapping.get(p.get('class', ''), p.get('class', '')) if class_mapping else p.get('class', '')) == class_name
+                                                        ]
+                                                        tp, fp, fn = match_predictions_to_ground_truth(
+                                                            filtered_preds,
+                                                            [g for g in ground_truth if g.get('class') == class_name],
+                                                            iou_threshold=0.5,
+                                                            class_mapping=class_mapping
+                                                        )
+                                                        tp_count = len([x for x in tp if x.get('class') == class_name])
+                                                        fp_count = len([x for x in fp if x.get('class') == class_name])
+                                                        fn_count = len([x for x in fn if x.get('class') == class_name])
+                                                        
+                                                        precision = tp_count / (tp_count + fp_count) if (tp_count + fp_count) > 0 else 0.0
+                                                        recall = tp_count / (tp_count + fn_count) if (tp_count + fn_count) > 0 else 0.0
+                                                        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+                                                        f1_scores.append(f1)
+                                                    
+                                                    f1_fig.add_trace(go.Scatter(
+                                                        x=conf_thresholds,
+                                                        y=f1_scores,
+                                                        mode='lines',
+                                                        name=class_name,
+                                                        line=dict(width=2)
+                                                    ))
+                                                
+                                                # Overall F1 curve
+                                                overall_f1_scores = []
+                                                for conf_thresh in conf_thresholds:
+                                                    filtered_preds = [p for p in all_predictions if p.get('confidence', 0) >= conf_thresh]
+                                                    tp, fp, fn = match_predictions_to_ground_truth(
+                                                        filtered_preds, ground_truth, iou_threshold=0.5, class_mapping=class_mapping
+                                                    )
+                                                    total_tp = len(tp)
+                                                    total_fp = len(fp)
+                                                    total_fn = len(fn)
+                                                    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+                                                    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+                                                    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+                                                    overall_f1_scores.append(f1)
+                                                
+                                                # Find best F1 and confidence
+                                                best_f1_idx = np.argmax(overall_f1_scores)
+                                                best_f1 = overall_f1_scores[best_f1_idx]
+                                                best_conf = conf_thresholds[best_f1_idx]
+                                                
+                                                f1_fig.add_trace(go.Scatter(
+                                                    x=conf_thresholds,
+                                                    y=overall_f1_scores,
+                                                    mode='lines',
+                                                    name=f"all classes {best_f1:.2f} at {best_conf:.3f}",
+                                                    line=dict(width=3, color='black')
+                                                ))
+                                                
+                                                f1_fig.update_layout(
+                                                    title='F1-Confidence Curve',
+                                                    xaxis_title='Confidence',
+                                                    yaxis_title='F1',
+                                                    xaxis=dict(range=[0, 1]),
+                                                    yaxis=dict(range=[0, 1]),
+                                                    height=500,
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                )
+                                                st.plotly_chart(f1_fig, use_container_width=True)
+                                                
+                                                # 3. Recall-Confidence Curve
+                                                st.markdown("#### Recall-Confidence Curve")
+                                                recall_fig = go.Figure()
+                                                
+                                                for class_name in sorted(all_classes):
+                                                    recalls = []
+                                                    for conf_thresh in conf_thresholds:
+                                                        filtered_preds = [
+                                                            p for p in all_predictions
+                                                            if p.get('confidence', 0) >= conf_thresh
+                                                            and (class_mapping.get(p.get('class', ''), p.get('class', '')) if class_mapping else p.get('class', '')) == class_name
+                                                        ]
+                                                        tp, fp, fn = match_predictions_to_ground_truth(
+                                                            filtered_preds,
+                                                            [g for g in ground_truth if g.get('class') == class_name],
+                                                            iou_threshold=0.5,
+                                                            class_mapping=class_mapping
+                                                        )
+                                                        tp_count = len([x for x in tp if x.get('class') == class_name])
+                                                        fn_count = len([x for x in fn if x.get('class') == class_name])
+                                                        recall = tp_count / (tp_count + fn_count) if (tp_count + fn_count) > 0 else 0.0
+                                                        recalls.append(recall)
+                                                    
+                                                    recall_fig.add_trace(go.Scatter(
+                                                        x=conf_thresholds,
+                                                        y=recalls,
+                                                        mode='lines',
+                                                        name=class_name,
+                                                        line=dict(width=2)
+                                                    ))
+                                                
+                                                # Overall recall curve
+                                                overall_recalls = []
+                                                for conf_thresh in conf_thresholds:
+                                                    filtered_preds = [p for p in all_predictions if p.get('confidence', 0) >= conf_thresh]
+                                                    tp, fp, fn = match_predictions_to_ground_truth(
+                                                        filtered_preds, ground_truth, iou_threshold=0.5, class_mapping=class_mapping
+                                                    )
+                                                    total_tp = len(tp)
+                                                    total_fn = len(fn)
+                                                    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+                                                    overall_recalls.append(recall)
+                                                
+                                                recall_fig.add_trace(go.Scatter(
+                                                    x=conf_thresholds,
+                                                    y=overall_recalls,
+                                                    mode='lines',
+                                                    name=f"all classes 1.00 at 0.000",
+                                                    line=dict(width=3, color='black')
+                                                ))
+                                                
+                                                recall_fig.update_layout(
+                                                    title='Recall-Confidence Curve',
+                                                    xaxis_title='Confidence',
+                                                    yaxis_title='Recall',
+                                                    xaxis=dict(range=[0, 1]),
+                                                    yaxis=dict(range=[0, 1]),
+                                                    height=500,
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                )
+                                                st.plotly_chart(recall_fig, use_container_width=True)
+                                                
+                                                # 4. Precision-Confidence Curve
+                                                st.markdown("#### Precision-Confidence Curve")
+                                                prec_fig = go.Figure()
+                                                
+                                                for class_name in sorted(all_classes):
+                                                    precisions = []
+                                                    for conf_thresh in conf_thresholds:
+                                                        filtered_preds = [
+                                                            p for p in all_predictions
+                                                            if p.get('confidence', 0) >= conf_thresh
+                                                            and (class_mapping.get(p.get('class', ''), p.get('class', '')) if class_mapping else p.get('class', '')) == class_name
+                                                        ]
+                                                        tp, fp, fn = match_predictions_to_ground_truth(
+                                                            filtered_preds,
+                                                            [g for g in ground_truth if g.get('class') == class_name],
+                                                            iou_threshold=0.5,
+                                                            class_mapping=class_mapping
+                                                        )
+                                                        tp_count = len([x for x in tp if x.get('class') == class_name])
+                                                        fp_count = len([x for x in fp if x.get('class') == class_name])
+                                                        precision = tp_count / (tp_count + fp_count) if (tp_count + fp_count) > 0 else 0.0
+                                                        precisions.append(precision)
+                                                    
+                                                    prec_fig.add_trace(go.Scatter(
+                                                        x=conf_thresholds,
+                                                        y=precisions,
+                                                        mode='lines',
+                                                        name=class_name,
+                                                        line=dict(width=2)
+                                                    ))
+                                                
+                                                # Overall precision curve
+                                                overall_precisions = []
+                                                for conf_thresh in conf_thresholds:
+                                                    filtered_preds = [p for p in all_predictions if p.get('confidence', 0) >= conf_thresh]
+                                                    tp, fp, fn = match_predictions_to_ground_truth(
+                                                        filtered_preds, ground_truth, iou_threshold=0.5, class_mapping=class_mapping
+                                                    )
+                                                    total_tp = len(tp)
+                                                    total_fp = len(fp)
+                                                    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+                                                    overall_precisions.append(precision)
+                                                
+                                                # Find best precision and confidence
+                                                best_prec_idx = np.argmax(overall_precisions)
+                                                best_prec = overall_precisions[best_prec_idx]
+                                                best_prec_conf = conf_thresholds[best_prec_idx]
+                                                
+                                                prec_fig.add_trace(go.Scatter(
+                                                    x=conf_thresholds,
+                                                    y=overall_precisions,
+                                                    mode='lines',
+                                                    name=f"all classes {best_prec:.2f} at {best_prec_conf:.3f}",
+                                                    line=dict(width=3, color='black')
+                                                ))
+                                                
+                                                prec_fig.update_layout(
+                                                    title='Precision-Confidence Curve',
+                                                    xaxis_title='Confidence',
+                                                    yaxis_title='Precision',
+                                                    xaxis=dict(range=[0, 1]),
+                                                    yaxis=dict(range=[0, 1]),
+                                                    height=500,
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                )
+                                                st.plotly_chart(prec_fig, use_container_width=True)
+                                                
+                                                # 5. Confusion Matrix
+                                                st.markdown("#### Confusion Matrix")
+                                                
+                                                # Build confusion matrix
+                                                class_list = sorted(all_classes)
+                                                if 'background' not in class_list:
+                                                    class_list.append('background')
+                                                
+                                                cm_size = len(class_list)
+                                                confusion_matrix = np.zeros((cm_size, cm_size), dtype=int)
+                                                
+                                                # Map class names to indices
+                                                class_to_idx = {cls: idx for idx, cls in enumerate(class_list)}
+                                                
+                                                # Use matched predictions at IoU 0.5
+                                                tp, fp, fn = match_predictions_to_ground_truth(
+                                                    all_predictions, ground_truth, iou_threshold=0.5, class_mapping=class_mapping
+                                                )
+                                                
+                                                # Count true positives (correct predictions)
+                                                for detection in tp:
+                                                    pred_class = detection.get('class', '')
+                                                    if pred_class in class_to_idx:
+                                                        confusion_matrix[class_to_idx[pred_class], class_to_idx[pred_class]] += 1
+                                                
+                                                # Count false positives (predicted but not in ground truth)
+                                                for detection in fp:
+                                                    pred_class = detection.get('class', '')
+                                                    if pred_class in class_to_idx:
+                                                        # Find the actual class from ground truth (if any)
+                                                        gt_class = 'background'
+                                                        confusion_matrix[class_to_idx[pred_class], class_to_idx[gt_class]] += 1
+                                                
+                                                # Count false negatives (in ground truth but not predicted)
+                                                for detection in fn:
+                                                    gt_class = detection.get('class', '')
+                                                    if gt_class in class_to_idx:
+                                                        pred_class = 'background'
+                                                        confusion_matrix[class_to_idx[pred_class], class_to_idx[gt_class]] += 1
+                                                
+                                                # Create confusion matrix heatmap
+                                                cm_fig = go.Figure(data=go.Heatmap(
+                                                    z=confusion_matrix,
+                                                    x=class_list,
+                                                    y=class_list,
+                                                    colorscale='Blues',
+                                                    text=confusion_matrix,
+                                                    texttemplate='%{text}',
+                                                    textfont={"size": 10},
+                                                    colorbar=dict(title="Count")
+                                                ))
+                                                
+                                                cm_fig.update_layout(
+                                                    title='Confusion Matrix',
+                                                    xaxis_title='True',
+                                                    yaxis_title='Predicted',
+                                                    height=600,
+                                                    width=800
+                                                )
+                                                st.plotly_chart(cm_fig, use_container_width=True)
+                                            
                                             else:
                                                 st.info("📊 Install plotly to view interactive charts: `pip install plotly`")
                                         else:
