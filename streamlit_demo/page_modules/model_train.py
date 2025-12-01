@@ -163,26 +163,7 @@ def render():
                 value=100,
                 step=10,
                 help="Number of training epochs"
-            )
-            
-            # Allow user to enable/disable image size configuration
-            enable_imgsz = st.checkbox(
-                "Configure Image Size",
-                value=True,
-                help="Enable to configure image size for training"
-            )
-            
-            if enable_imgsz:
-                imgsz = st.number_input(
-                    "Image Size",
-                    min_value=320,
-                    max_value=1280,
-                    value=640,
-                    step=32,
-                    help="Image size for training (must be multiple of 32)"
-                )
-            else:
-                imgsz = None
+            )        
             
             batch = st.number_input(
                 "Batch Size",
@@ -192,7 +173,46 @@ def render():
                 step=1,
                 help="Batch size for training"
             )
-        
+
+            # Image size input (always visible, but can be disabled)
+            # Checkbox below the input
+            enable_imgsz = st.checkbox(
+                "Configure Image Size",
+                value=True,
+                help="Enable to configure image size for training",
+                key='enable_imgsz'
+            )
+            
+            # Width and Height inputs
+            col_width, col_height = st.columns(2)
+            
+            with col_width:
+                imgsz_width = st.number_input(
+                    "Image Width",
+                    min_value=320,
+                    max_value=1280,
+                    value=640,
+                    step=32,
+                    disabled=not enable_imgsz,
+                    help="Image width for training (must be multiple of 32)" if enable_imgsz else "No Image size Configured",
+                    key='imgsz_width'
+                )
+            
+            with col_height:
+                imgsz_height = st.number_input(
+                    "Image Height",
+                    min_value=320,
+                    max_value=1280,
+                    value=640,
+                    step=32,
+                    disabled=not enable_imgsz,
+                    help="Image height for training (must be multiple of 32)" if enable_imgsz else "No Image size Configured",
+                    key='imgsz_height'
+                )
+            
+            # Set imgsz to None if checkbox is disabled, otherwise create tuple (width, height)
+            imgsz = (imgsz_width, imgsz_height) if enable_imgsz else None
+
         with col2:
             device = st.text_input(
                 "Device",
@@ -209,12 +229,24 @@ def render():
                 help="Number of worker threads for data loading"
             )
             
-            cache_type = st.selectbox(
-                "Cache Type",
-                ["disk", "ram", False],
-                index=0,
-                help="Cache type for faster data loading (disk=slower but uses less RAM)"
+            # Cache type input (always visible, but can be disabled)
+            # Checkbox below the input
+            enable_cache = st.checkbox(
+                "Configure Cache Type",
+                value=True,
+                help="Enable to configure cache type for training",
+                key='enable_cache'
             )
+            
+            cache_type_input = st.text_input(
+                "Cache Type",
+                value="disk",
+                disabled=not enable_cache,
+                help="Cache type for faster data loading (e.g., disk, ram)" if enable_cache else "No cache configured"
+            )
+            
+            # Set cache_type to False if checkbox is disabled, otherwise use the input value
+            cache_type = cache_type_input if enable_cache else False
     
     with st.expander("Training Parameters", expanded=True):
         col1, col2 = st.columns(2)
@@ -291,8 +323,18 @@ def render():
                     train_args["imgsz"] = imgsz
                 
                 # Add optional parameters
-                if cache_type:
-                    train_args["cache"] = cache_type
+                if cache_type is not False:
+                    if isinstance(cache_type, str) and cache_type.strip():
+                        # Convert string to appropriate type
+                        cache_value = cache_type.strip().lower()
+                        if cache_value == "ram":
+                            train_args["cache"] = "ram"
+                        elif cache_value == "disk":
+                            train_args["cache"] = "disk"
+                        else:
+                            train_args["cache"] = cache_type.strip()
+                    elif cache_type:
+                        train_args["cache"] = cache_type
                 
                 if cos_lr:
                     train_args["cos_lr"] = True
@@ -303,11 +345,11 @@ def render():
                     "Model": model_size,
                     "Data YAML": uploaded_yaml.name,
                     "Epochs": epochs,
-                    "Image Size": imgsz if imgsz is not None else "Not configured",
+                    "Image Size": f"{imgsz}" if imgsz is not None else "Not configured",
                     "Batch Size": batch,
                     "Device": device,
                     "Workers": workers,
-                    "Cache": cache_type if cache_type else "None",
+                    "Cache": cache_type if (cache_type and cache_type is not False) else "None",
                     "Patience": patience if patience > 0 else "Disabled",
                     "Cosine LR": "Enabled" if cos_lr else "Disabled",
                     "Save Period": save_period if save_period > 0 else "Disabled",
