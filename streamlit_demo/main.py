@@ -20,6 +20,7 @@ from page_modules import (
 
 # Page configuration
 st.set_page_config(page_title="hCAPTCHA Solver", layout="wide")
+
 st.title("hCAPTCHA Solver Workflow")
 
 # Sidebar navigation
