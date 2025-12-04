@@ -120,7 +120,7 @@ def render():
         st.info("No output directory selected. Click 'Browse files' to select a directory.")
     
     if TKINTER_AVAILABLE:
-        if st.button("Browse files", key="browse_output_btn", use_container_width=True, type="primary"):
+        if st.button("Browse files", key="browse_output_btn", width='stretch', type="primary"):
             st.session_state['browse_output_dir'] = True
             st.rerun()
     else:
@@ -289,7 +289,7 @@ def render():
     # Section 4: Start Training
     st.markdown("### 4. Start Training")
     
-    if st.button("🚀 Start Training", type="primary", use_container_width=True):
+    if st.button("🚀 Start Training", type="primary", width='stretch'):
         # Validate inputs
         if not data_yaml_path:
             st.error("Please upload a data.yaml file.")

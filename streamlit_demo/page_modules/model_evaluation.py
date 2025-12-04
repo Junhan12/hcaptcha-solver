@@ -39,7 +39,9 @@ def render():
         if not models:
             st.warning("No models found in MongoDB. Please create a model first in the 'Create and Upload Model' section.")
         else:
-            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in models}
+            # Sort models by model_id in ascending order to ensure consistent dropdown ordering
+            sorted_models = sorted(models, key=lambda m: m.get('model_id', ''))
+            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in sorted_models}
         selected_model_name = st.selectbox(
             "Select Model",
             options=list(model_options.keys()),
@@ -408,7 +410,7 @@ def render():
                                                     barmode='group',
                                                     height=400
                                                 )
-                                                st.plotly_chart(fig_prf, use_container_width=True)
+                                                st.plotly_chart(fig_prf, width='stretch')
 
                                                 # AP@0.5 chart
                                                 fig_ap = go.Figure()
@@ -424,7 +426,7 @@ def render():
                                                     yaxis_title='AP@0.5',
                                                     height=400
                                                 )
-                                                st.plotly_chart(fig_ap, use_container_width=True)
+                                                st.plotly_chart(fig_ap, width='stretch')
 
                                                 # TP, FP, FN chart
                                                 fig_counts = go.Figure()
@@ -456,7 +458,7 @@ def render():
                                                     barmode='group',
                                                     height=400
                                                 )
-                                                st.plotly_chart(fig_counts, use_container_width=True)
+                                                st.plotly_chart(fig_counts, width='stretch')
 
                                                 # Overall metrics summary chart
                                                 st.markdown("#### Overall Metrics Summary")
@@ -474,7 +476,7 @@ def render():
                                                     yaxis_title='Score',
                                                     height=400
                                                 )
-                                                st.plotly_chart(summary_fig, use_container_width=True)
+                                                st.plotly_chart(summary_fig, width='stretch')
                                                 
                                                 # Advanced Evaluation Curves
                                                 st.markdown("---")
@@ -584,7 +586,7 @@ def render():
                                                     height=500,
                                                     legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
                                                 )
-                                                st.plotly_chart(pr_fig, use_container_width=True)
+                                                st.plotly_chart(pr_fig, width='stretch')
                                                 
                                                 # 2. F1-Confidence Curve
                                                 st.markdown("#### F1-Confidence Curve")
@@ -658,7 +660,7 @@ def render():
                                                     height=500,
                                                     legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
                                                 )
-                                                st.plotly_chart(f1_fig, use_container_width=True)
+                                                st.plotly_chart(f1_fig, width='stretch')
                                                 
                                                 # 3. Recall-Confidence Curve
                                                 st.markdown("#### Recall-Confidence Curve")
@@ -720,7 +722,7 @@ def render():
                                                     height=500,
                                                     legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
                                                 )
-                                                st.plotly_chart(recall_fig, use_container_width=True)
+                                                st.plotly_chart(recall_fig, width='stretch')
                                                 
                                                 # 4. Precision-Confidence Curve
                                                 st.markdown("#### Precision-Confidence Curve")
@@ -787,7 +789,7 @@ def render():
                                                     height=500,
                                                     legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
                                                 )
-                                                st.plotly_chart(prec_fig, use_container_width=True)
+                                                st.plotly_chart(prec_fig, width='stretch')
                                                 
                                                 # 5. Confusion Matrix
                                                 st.markdown("#### Confusion Matrix")
@@ -848,7 +850,7 @@ def render():
                                                     height=600,
                                                     width=800
                                                 )
-                                                st.plotly_chart(cm_fig, use_container_width=True)
+                                                st.plotly_chart(cm_fig, width='stretch')
                                             
                                             else:
                                                 st.info("📊 Install plotly to view interactive charts: `pip install plotly`")

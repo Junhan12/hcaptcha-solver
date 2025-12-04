@@ -210,7 +210,8 @@ def list_models(limit=50):
     if not _db_available():
         return []
     try:
-        cursor = _db.model.find({}).sort([("is_active", -1), ("model_name", 1)]).limit(int(limit))
+        # Sort by model_id in ascending order to ensure consistent dropdown ordering
+        cursor = _db.model.find({}).sort("model_id", 1).limit(int(limit))
         return list(cursor)
     except Exception:
         return []

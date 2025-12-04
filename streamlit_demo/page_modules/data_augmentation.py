@@ -281,7 +281,7 @@ def render():
                 st.info("No folder selected. Click 'Browse files' to select a folder.")
             
             if TKINTER_AVAILABLE:
-                if st.button("Browse files", key="browse_images_btn", use_container_width=True, type="primary"):
+                if st.button("Browse files", key="browse_images_btn", width='stretch', type="primary"):
                     st.session_state['browse_images_folder'] = True
                     st.rerun()
             else:
@@ -311,7 +311,7 @@ def render():
                 st.info("No folder selected. Click 'Browse files' to select a folder (optional).")
             
             if TKINTER_AVAILABLE:
-                if st.button("Browse files", key="browse_labels_btn", use_container_width=True, type="primary"):
+                if st.button("Browse files", key="browse_labels_btn", width='stretch', type="primary"):
                     st.session_state['browse_labels_folder'] = True
                     st.rerun()
             else:
@@ -345,7 +345,7 @@ def render():
                 st.info("No folder selected. Click 'Browse files' to select output directory.")
             
             if TKINTER_AVAILABLE:
-                if st.button("Browse files", key="browse_output_btn", use_container_width=True, type="primary"):
+                if st.button("Browse files", key="browse_output_btn", width='stretch', type="primary"):
                     st.session_state['browse_output_folder'] = True
                     st.rerun()
             else:
@@ -516,7 +516,7 @@ def render():
                 )
     
     # Apply augmentation button
-    if st.button("Apply Augmentation", type="primary", use_container_width=True):
+    if st.button("Apply Augmentation", type="primary", width='stretch'):
         # Get folder paths from session state
         images_folder = st.session_state.get('aug_images_folder', '')
         labels_folder = st.session_state.get('aug_labels_folder', '')
