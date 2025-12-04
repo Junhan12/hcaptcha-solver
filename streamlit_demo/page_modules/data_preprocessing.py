@@ -29,11 +29,16 @@ except ImportError:
     TKINTER_AVAILABLE = False
 
 from utils import (
-    list_models,
-    get_model_by_id,
-    get_preprocess_for_model,
+    list_preprocess_profiles,
     apply_preprocess,
 )
+from app.database import get_preprocess_profile
+
+try:
+    from app.preprocess import resize_labels
+    RESIZE_LABELS_AVAILABLE = True
+except ImportError:
+    RESIZE_LABELS_AVAILABLE = False
 
 try:
     from app.preprocess import OPERATION_REGISTRY, _bytes_to_cv2_image, _cv2_image_to_bytes
@@ -62,15 +67,32 @@ def process_folder_images(
     input_folder,
     output_folder,
     preprocess_profile,
+    labels_folder=None,
     progress_callback=None
 ):
     """
     Process all images in a folder through preprocessing steps.
+    Optionally process corresponding labels if resize is applied.
+    
+    Args:
+        input_folder: Directory containing input images
+        output_folder: Directory to save preprocessed images (this will be the preprocessed_images folder)
+        preprocess_profile: Preprocessing profile to apply
+        labels_folder: Optional directory containing YOLO format label files (.txt)
+        progress_callback: Optional callback function(processed, total, current_file)
+    
+    Returns:
+        tuple: (processed_count, total_images, errors)
+    """
+    """
+    Process all images in a folder through preprocessing steps.
+    Optionally process corresponding labels if resize is applied.
     
     Args:
         input_folder: Directory containing input images
         output_folder: Directory to save preprocessed images
         preprocess_profile: Preprocessing profile to apply
+        labels_folder: Optional directory containing YOLO format label files (.txt)
         progress_callback: Optional callback function(processed, total, current_file)
     
     Returns:
@@ -107,13 +129,66 @@ def process_folder_images(
             with open(img_path, 'rb') as f:
                 img_bytes = f.read()
             
-            # Apply preprocessing
-            processed_img_bytes, _ = apply_preprocess(img_bytes, preprocess_profile)
+            # Apply preprocessing - handle both old (2 values) and new (3 values) return formats
+            try:
+                result = apply_preprocess(img_bytes, preprocess_profile)
+                if len(result) == 3:
+                    processed_img_bytes, _, resize_info = result
+                elif len(result) == 2:
+                    # Handle old format that returns only 2 values
+                    processed_img_bytes, _ = result
+                    resize_info = None
+                else:
+                    raise ValueError(f"Unexpected return value from apply_preprocess: {len(result)} values")
+            except ValueError as ve:
+                # Re-raise ValueError with more context
+                raise ValueError(f"Error in apply_preprocess for {filename}: {ve}")
+            except Exception as e:
+                # Wrap other exceptions
+                raise Exception(f"Error in apply_preprocess for {filename}: {e}")
             
             # Save preprocessed image
             output_path = os.path.join(output_folder, filename)
             with open(output_path, 'wb') as f:
                 f.write(processed_img_bytes)
+            
+            # Process labels if resize was applied and labels folder is provided
+            # Check if preprocessing profile has resize operation (even if resize_info is None due to no actual resize)
+            has_resize_operation = any(
+                step.get('operation') == 'resize' 
+                for step in preprocess_profile.get('steps', [])
+            )
+            
+            if has_resize_operation and labels_folder and RESIZE_LABELS_AVAILABLE:
+                label_file = os.path.join(labels_folder, f"{base_name}.txt")
+                if os.path.exists(label_file):
+                    try:
+                        # Read original label
+                        with open(label_file, 'r', encoding='utf-8') as f:
+                            label_content = f.read()
+                        
+                        # Resize labels (resize_info might be None if no actual resize occurred, but we still process)
+                        if resize_info:
+                            resized_label_content = resize_labels(label_content, resize_info)
+                        else:
+                            # No resize occurred (scale factors are 1.0), but resize operation exists
+                            # Just copy the label as-is
+                            resized_label_content = label_content
+                        
+                        # Save resized label to output folder (same parent as output_folder)
+                        # output_folder is actually save_images_dir (preprocessed_images), so get its parent
+                        output_folder_parent = os.path.dirname(output_folder)
+                        output_labels_dir = os.path.join(output_folder_parent, "preprocessed_labels")
+                        os.makedirs(output_labels_dir, exist_ok=True)
+                        output_label_path = os.path.join(output_labels_dir, f"{base_name}.txt")
+                        with open(output_label_path, 'w', encoding='utf-8') as f:
+                            f.write(resized_label_content)
+                    except Exception as e:
+                        errors.append((f"{base_name}.txt (label)", str(e)))
+                else:
+                    # Label file doesn't exist for this image - this is not necessarily an error
+                    # but we could log it if needed
+                    pass
             
             processed_count += 1
             if progress_callback:
@@ -155,7 +230,12 @@ def apply_preprocess_step_by_step(img_bytes, preprocess_profile):
             
             try:
                 operation_func = OPERATION_REGISTRY[operation_name]
-                img = operation_func(img, params)
+                
+                # Special handling for resize operation (returns tuple)
+                if operation_name == "resize":
+                    img, _ = operation_func(img, params)
+                else:
+                    img = operation_func(img, params)
                 
                 # Convert intermediate result to bytes for display
                 intermediate_bytes = _cv2_image_to_bytes(img, format='PNG')
@@ -177,54 +257,100 @@ def apply_preprocess_step_by_step(img_bytes, preprocess_profile):
 def render():
     """Render the Data Preprocessing page."""
     st.header("Data Preprocessing")
-    st.info("Select a model and upload images to apply the model's preprocessing steps.")
+    st.info("Select a preprocessing profile and upload images to apply the preprocessing steps.")
     
-    # Model selection
+    # Preprocessing profile selection
     try:
-        models = list_models(limit=100)
-        if not models:
-            st.warning("No models found in MongoDB. Please create a model first in the 'Create and Upload Model' section.")
+        preprocess_profiles = list_preprocess_profiles(limit=100)
+        if not preprocess_profiles:
+            st.warning("No preprocessing profiles found in MongoDB. Please create a preprocessing profile first in the 'Create and Upload Model' section.")
         else:
-            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in models}
-            selected_preprocess_model_name = st.selectbox(
-                "Select Model",
-                options=list(model_options.keys()),
-                key="model_preprocess_select"
-            )
-            selected_preprocess_model_id = model_options[selected_preprocess_model_name]
-            selected_preprocess_model = get_model_by_id(selected_preprocess_model_id)
+            # Create options for selectbox
+            profile_options = {}
+            for profile in preprocess_profiles:
+                preprocess_id = profile.get('preprocess_id', 'N/A')
+                name = profile.get('name', 'Unnamed')
+                # Create display name: "Name (ID)" or just "ID" if no name
+                display_name = f"{name} ({preprocess_id})" if name != 'Unnamed' else preprocess_id
+                profile_options[display_name] = preprocess_id
             
-            if selected_preprocess_model:
-                st.markdown("### Model Information")
-                col1, col2 = st.columns(2)
+            selected_profile_display = st.selectbox(
+                "Select Preprocessing Profile",
+                options=list(profile_options.keys()),
+                key="preprocess_profile_select"
+            )
+            selected_preprocess_id = profile_options[selected_profile_display]
+            preprocess_profile = get_preprocess_profile(selected_preprocess_id)
+            
+            if preprocess_profile:
+                st.markdown("### Preprocessing Profile Information")
+                
+                # Display profile metadata in a more prominent way
+                col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.caption(f"**Model ID:** {selected_preprocess_model.get('model_id', 'N/A')}")
+                    st.metric("Preprocessing ID", preprocess_profile.get('preprocess_id', 'N/A'))
                 with col2:
-                    st.caption(f"**Model Name:** {selected_preprocess_model.get('model_name', 'N/A')}")
-                
-                # Get preprocessing profile for the selected model
-                preprocess_profile = get_preprocess_for_model(selected_preprocess_model)
-                
-                if preprocess_profile:
-                    st.markdown("### Preprocessing Profile")
-                    st.info(f"**Preprocessing ID:** {preprocess_profile.get('preprocess_id', 'N/A')}")
-                    if preprocess_profile.get('name'):
-                        st.caption(f"**Name:** {preprocess_profile.get('name', 'N/A')}")
-                    
+                    profile_name = preprocess_profile.get('name', 'Unnamed')
+                    st.metric("Profile Name", profile_name if profile_name != 'Unnamed' else 'N/A')
+                with col3:
                     steps = preprocess_profile.get('steps', [])
-                    if steps:
-                        st.caption(f"**Number of Steps:** {len(steps)}")
-                        with st.expander("View Preprocessing Steps"):
-                            for idx, step in enumerate(steps, 1):
-                                operation = step.get('operation', 'Unknown')
-                                params = step.get('params', {})
-                                st.write(f"{idx}. **{operation}**")
-                                if params:
-                                    st.json(params)
-                    else:
-                        st.warning("This model has a preprocessing profile but no steps defined.")
+                    st.metric("Number of Steps", len(steps) if steps else 0)
+                
+                # Display preprocessing steps in a table format
+                if steps:
+                    st.markdown("#### Preprocessing Steps")
+                    
+                    # Prepare data for table
+                    steps_data = []
+                    for idx, step in enumerate(steps, 1):
+                        operation = step.get('operation', 'Unknown')
+                        params = step.get('params', {})
+                        
+                        # Format parameters as a readable string
+                        if params:
+                            param_strs = []
+                            for key, value in params.items():
+                                if isinstance(value, (list, tuple)):
+                                    value_str = ', '.join(map(str, value))
+                                    param_strs.append(f"{key}: [{value_str}]")
+                                else:
+                                    param_strs.append(f"{key}: {value}")
+                            params_display = "; ".join(param_strs)
+                        else:
+                            params_display = "No parameters"
+                        
+                        steps_data.append({
+                            "Step": idx,
+                            "Operation": operation.capitalize(),
+                            "Parameters": params_display
+                        })
+                    
+                    # Display as table
+                    df_steps = pd.DataFrame(steps_data)
+                    st.dataframe(
+                        df_steps,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Step": st.column_config.NumberColumn(
+                                "Step",
+                                help="Processing order",
+                                width="small"
+                            ),
+                            "Operation": st.column_config.TextColumn(
+                                "Operation",
+                                help="Preprocessing operation name",
+                                width="medium"
+                            ),
+                            "Parameters": st.column_config.TextColumn(
+                                "Parameters",
+                                help="Operation parameters",
+                                width="large"
+                            )
+                        }
+                    )
                 else:
-                    st.warning("This model does not have a preprocessing profile configured.")
+                    st.warning("This preprocessing profile has no steps defined.")
                 
                 st.markdown("---")
                 
@@ -233,6 +359,8 @@ def render():
                     st.session_state['preprocess_input_folder'] = ""
                 if 'preprocess_output_folder' not in st.session_state:
                     st.session_state['preprocess_output_folder'] = ""
+                if 'preprocess_labels_folder' not in st.session_state:
+                    st.session_state['preprocess_labels_folder'] = ""
                 
                 # Handle folder selection BEFORE creating widgets
                 if TKINTER_AVAILABLE:
@@ -249,11 +377,18 @@ def render():
                             st.session_state['preprocess_output_folder'] = selected_folder
                         st.session_state['browse_output_folder'] = False
                         st.rerun()
+                    
+                    if 'browse_labels_folder' in st.session_state and st.session_state.get('browse_labels_folder'):
+                        selected_folder = select_folder_dialog("Select Labels Folder")
+                        if selected_folder:
+                            st.session_state['preprocess_labels_folder'] = selected_folder
+                        st.session_state['browse_labels_folder'] = False
+                        st.rerun()
                 
                 # Folder batch processing section
                 st.markdown("### Batch Process Folder")
                 with st.expander("Folder Configuration", expanded=True):
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
                     
                     with col1:
                         st.markdown("**Input Images Folder**")
@@ -281,9 +416,9 @@ def render():
                         
                         if input_folder:
                             if os.path.exists(input_folder):
-                                st.caption(f"✓ Valid folder: {os.path.basename(input_folder)}")
+                                st.caption(f"Valid folder: {os.path.basename(input_folder)}")
                             else:
-                                st.warning(f"⚠ Path not found")
+                                st.warning(f"Path not found")
                     
                     with col2:
                         st.markdown("**Output Directory**")
@@ -311,15 +446,46 @@ def render():
                         
                         if output_folder:
                             if os.path.exists(output_folder):
-                                st.caption(f"✓ Valid folder: {os.path.basename(output_folder)}")
+                                st.caption(f"Valid folder: {os.path.basename(output_folder)}")
                             else:
-                                st.warning(f"⚠ Path not found")
+                                st.warning(f"Path not found")
+                    
+                    with col3:
+                        st.markdown("**Labels Folder (Optional)**")
+                        labels_folder = st.session_state.get('preprocess_labels_folder', '')
+                                                
+                        if labels_folder and os.path.exists(labels_folder):
+                            st.success(f"Selected: {labels_folder}")
+                        else:
+                            st.info("No folder selected. Optional - only needed if resize is applied.")
+                        
+                        if TKINTER_AVAILABLE:
+                            if st.button("Browse files", key="browse_labels_btn", use_container_width=True, type="primary"):
+                                st.session_state['browse_labels_folder'] = True
+                                st.rerun()
+                        else:
+                            manual_labels_folder = st.text_input(
+                                "Enter labels folder path manually:",
+                                value=labels_folder,
+                                help="Path to folder containing YOLO format label files (.txt)",
+                                key="labels_folder_input_manual"
+                            )
+                            if manual_labels_folder != labels_folder:
+                                st.session_state['preprocess_labels_folder'] = manual_labels_folder
+                                labels_folder = manual_labels_folder
+                        
+                        if labels_folder:
+                            if os.path.exists(labels_folder):
+                                st.caption(f"Valid folder: {os.path.basename(labels_folder)}")
+                            else:
+                                st.warning(f"Path not found")
                 
                 # Batch process button
                 if preprocess_profile and st.button("Process Folder", key="process_folder_button", type="primary", use_container_width=True):
                     # Get folder paths from session state
                     input_folder = st.session_state.get('preprocess_input_folder', '')
                     output_folder = st.session_state.get('preprocess_output_folder', '')
+                    labels_folder = st.session_state.get('preprocess_labels_folder', '')
                     
                     # Validate inputs
                     if not input_folder:
@@ -353,6 +519,7 @@ def render():
                                 input_folder=input_folder,
                                 output_folder=save_images_dir,
                                 preprocess_profile=preprocess_profile,
+                                labels_folder=labels_folder if labels_folder and os.path.exists(labels_folder) else None,
                                 progress_callback=progress_callback
                             )
                             
@@ -394,7 +561,7 @@ def render():
                 )
                 
                 if uploaded_image and preprocess_profile:
-                    if st.button("Apply Preprocessing", key="apply_preprocess_button"):
+                    if st.button("Apply Preprocessing", key="apply_preprocess_button", type="primary", use_container_width=True):
                         try:
                             # Read original image bytes
                             original_img_bytes = uploaded_image.read()
@@ -517,9 +684,9 @@ def render():
                             st.code(traceback.format_exc())
                 
                 elif uploaded_image and not preprocess_profile:
-                    st.error("Cannot apply preprocessing: Selected model does not have a preprocessing profile.")
+                    st.error("Cannot apply preprocessing: Selected preprocessing profile has no steps defined.")
                 
     except Exception as e:
-        st.error(f"Error loading models: {e}")
+        st.error(f"Error loading preprocessing profiles: {e}")
         st.code(traceback.format_exc())
 
