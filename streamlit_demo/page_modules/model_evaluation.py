@@ -200,7 +200,7 @@ def render():
                                             processed_img_bytes = img_bytes
                                             if preprocess_profile:
                                                 try:
-                                                    processed_img_bytes, _ = apply_preprocess(img_bytes, preprocess_profile)
+                                                    processed_img_bytes, _, _ = apply_preprocess(img_bytes, preprocess_profile)
                                                 except Exception as e:
                                                     st.warning(f"Preprocessing failed for {os.path.basename(img_path)}: {e}")
                                                     processed_img_bytes = img_bytes

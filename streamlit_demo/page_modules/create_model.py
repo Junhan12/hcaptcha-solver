@@ -17,19 +17,47 @@ from utils import (
     list_models,
     get_model_by_id,
     delete_model,
-    clear_model_cache,
-    get_cache_info,
     list_preprocess_profiles,
     list_postprocess_profiles,
     upsert_model,
 )
+import pandas as pd
+import re
+
+
+def get_next_model_id():
+    """
+    Get the next model ID by finding the highest model_id in the database
+    and incrementing it. Format: m-001, m-002, etc.
+    """
+    try:
+        models = list_models(limit=1000)  # Get all models to find max
+        if not models:
+            return "m-001"
+        
+        # Extract numeric parts from model_ids
+        max_num = 0
+        for model in models:
+            model_id = model.get('model_id', '')
+            # Match pattern like "m-001", "m-123", etc.
+            match = re.match(r'm-(\d+)', model_id, re.IGNORECASE)
+            if match:
+                num = int(match.group(1))
+                max_num = max(max_num, num)
+        
+        # Increment and format
+        next_num = max_num + 1
+        return f"m-{next_num:03d}"
+    except Exception as e:
+        # Fallback to m-001 if error
+        return "m-001"
 
 
 def render():
     """Render the Create and Upload Model page."""
     # Use existing "Create/Update Model" functionality
     st.subheader("Create / Update Model")
-    st.info("💡 Evaluation results will be automatically updated when you run the Model Training Evaluation.")
+    st.info("Evaluation results will be automatically updated when you run the Model Training Evaluation.")
     
     # Load profiles outside form for use in submission
     try:
@@ -40,8 +68,11 @@ def render():
         preprocess_profiles = []
         postprocess_profiles = []
     
+    # Auto-generate next model ID
+    auto_model_id = get_next_model_id()
+    
     with st.form("model_form"):
-        model_id = st.text_input("Model ID", placeholder="m-001")
+        model_id = st.text_input("Model ID", value=auto_model_id, disabled=True, help="Auto-generated model ID")
         model_name = st.text_input("Model Name", placeholder="yolov8-object-001")
         weights = st.file_uploader("Weights (.pt)", type=["pt"])
         is_active = st.checkbox("Set Active", value=False)
@@ -67,9 +98,11 @@ def render():
         submitted = st.form_submit_button("Save Model")
 
     if submitted:
-        if not model_id or not model_name:
-            st.error("model_id and model_name are required")
+        # Use the auto-generated model_id from the form (even though disabled, value is still available)
+        if not model_name:
+            st.error("model_name is required")
         else:
+            # model_id is already set from the form input above
             # Extract preprocess_id and postprocess_id from selected display strings
             # Access form values from session_state
             selected_preprocess_display = st.session_state.get("preprocess_select", "None")
@@ -162,35 +195,6 @@ def render():
 
     st.markdown("---")
     
-    # Model cache management section
-    st.subheader("Model Cache Management")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("View Cache Info"):
-            try:
-                cache_info = get_cache_info()
-                st.json({
-                    "Cached Models": cache_info['cached_models'],
-                    "Model Count": cache_info['model_count'],
-                    "Weights Count": cache_info['weights_count'],
-                    "Temp Files": cache_info['temp_file_count']
-                })
-            except Exception as e:
-                st.error(f"Error: {e}")
-    
-    with col2:
-        if st.button("Clear All Model Cache"):
-            try:
-                cleared = clear_model_cache()
-                st.success(f"Cache cleared! Removed {cleared['models']} models, {cleared['weights']} weights, and {cleared['temp_files']} temp files.")
-                if cleared['temp_file_paths']:
-                    st.caption(f"Deleted temp files: {len(cleared['temp_file_paths'])} files")
-            except Exception as e:
-                st.error(f"Error: {e}")
-    
-    st.markdown("---")
-    
     # Delete Model Section
     st.subheader("Delete Model")
     st.info("Select a model from MongoDB to delete. This will remove the model document and its associated weights from GridFS.")
@@ -220,7 +224,7 @@ def render():
                     st.caption(f"**Is Active:** {'Yes' if selected_delete_model.get('is_active') else 'No'}")
                 
                 if selected_delete_model.get('weights'):
-                    st.caption(f"⚠️ This model has weights stored in GridFS that will also be deleted.")
+                    st.caption(f"This model has weights stored in GridFS that will also be deleted.")
                 
                 # Confirmation before deletion
                 confirm_delete = st.checkbox(
@@ -241,21 +245,43 @@ def render():
         st.code(traceback.format_exc())
     
     st.markdown("---")
-    if st.button("List Models"):
+    
+    # List Models Section
+    st.subheader("List Models")
+    if st.button("List Models", type="primary"):
         try:
-            resp = requests.get("http://localhost:5000/models", timeout=API_TIMEOUT)
-            if resp.ok:
-                items = resp.json().get("items", [])
-                for it in items:
-                    st.write({
-                        "model_id": it.get("model_id"),
-                        "model_name": it.get("model_name"),
-                        "is_active": it.get("is_active"),
-                        "results": it.get("results"),
-                        "weights": it.get("weights"),
-                    })
+            models = list_models(limit=100)
+            if not models:
+                st.warning("No models found in MongoDB.")
             else:
-                st.error(f"List failed: {resp.status_code}")
+                # Prepare data for table
+                models_data = []
+                for model in models:
+                    models_data.append({
+                        "Model ID": model.get('model_id', 'N/A'),
+                        "Model Name": model.get('model_name', 'N/A')
+                    })
+                
+                # Display as table
+                df_models = pd.DataFrame(models_data)
+                st.dataframe(
+                    df_models,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Model ID": st.column_config.TextColumn(
+                            "Model ID",
+                            help="Unique model identifier",
+                            width="medium"
+                        ),
+                        "Model Name": st.column_config.TextColumn(
+                            "Model Name",
+                            help="Name of the model",
+                            width="large"
+                        )
+                    }
+                )
         except Exception as e:
             st.error(f"Error: {e}")
+            st.code(traceback.format_exc())
 

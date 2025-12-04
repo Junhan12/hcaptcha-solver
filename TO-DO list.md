@@ -1,4 +1,4 @@
-1. Create model and show evaluation metrics
+1. Create model and show evaluation metrics 
 2. EDA on the current dataset
 3. Preprocessing image
 4. Augmentation image
@@ -6,6 +6,21 @@
 6. Program clicking logic
 7. Design UI
 8. Demo display information 
+
+1. Auto crawl - save dir
+2. eda - gemini 
+3. sample img & entire dataset - preprocess
+4. sample img & entire dataset - augmentation
+5. training info - evaluation metrics (plot graph)
+
+-----
+EDA
+-----
+Hue and Saturation - preprocess grayscale - morphology (fill the faded shape)
+Laplacian - Blur (Noise) - Denoising method
+
+
+
 
 
 

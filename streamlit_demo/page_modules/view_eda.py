@@ -12,6 +12,7 @@ import os
 import glob
 from collections import Counter
 import sys
+from PIL import Image
 
 # Try to import tkinter for folder selection dialog
 try:
@@ -102,7 +103,6 @@ def analyze_brightness_contrast(dataset_folder, file_extension="*.jpg"):
 
     brightness_values = []
     contrast_values = []
-    problematic_images = []
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -120,14 +120,6 @@ def analyze_brightness_contrast(dataset_folder, file_extension="*.jpg"):
         brightness_values.append(mean_brightness)
         contrast_values.append(std_contrast)
 
-        filename = os.path.basename(path)
-        if mean_brightness < 40:
-            problematic_images.append((filename, "Too Dark", mean_brightness))
-        elif mean_brightness > 220:
-            problematic_images.append((filename, "Too Bright", mean_brightness))
-        elif std_contrast < 20:
-            problematic_images.append((filename, "Low Contrast (Washed Out)", std_contrast))
-
         if (idx + 1) % 50 == 0:
             progress_bar.progress((idx + 1) / len(image_paths))
 
@@ -135,36 +127,21 @@ def analyze_brightness_contrast(dataset_folder, file_extension="*.jpg"):
     status_text.empty()
 
     # Plotting
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     # Brightness
     ax1.hist(brightness_values, bins=30, color='green', alpha=0.7)
     ax1.set_title('Brightness Distribution')
     ax1.set_xlabel('Average Pixel Intensity (0=Black, 255=White)')
     ax1.set_ylabel('Count of Images')
-    ax1.axvline(x=40, color='r', linestyle='--', label='Dark Threshold')
-    ax1.axvline(x=220, color='r', linestyle='--', label='Bright Threshold')
-    ax1.legend()
 
     # Contrast
     ax2.hist(contrast_values, bins=30, color='purple', alpha=0.7)
     ax2.set_title('Contrast Distribution')
     ax2.set_xlabel('Standard Deviation (Low=Gray, High=High Contrast)')
     ax2.set_ylabel('Count of Images')
-    ax2.axvline(x=20, color='r', linestyle='--', label='Low Contrast Threshold')
-    ax2.legend()
 
     plt.tight_layout()
-
-    # Report Outliers
-    if problematic_images:
-        with st.expander("⚠️ Potential Issues Found", expanded=False):
-            for name, issue, val in problematic_images[:10]:
-                st.text(f"Image: {name} | Issue: {issue} | Value: {val:.2f}")
-            if len(problematic_images) > 10:
-                st.caption(f"... and {len(problematic_images) - 10} more issues")
-    else:
-        st.success("No extreme outliers found.")
 
     return fig
 
@@ -178,7 +155,6 @@ def analyze_blur(dataset_folder, file_extension="*.jpg"):
         return None
 
     blur_scores = []
-    blurriest_images = []
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -192,7 +168,6 @@ def analyze_blur(dataset_folder, file_extension="*.jpg"):
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         score = variance_of_laplacian(gray)
         blur_scores.append(score)
-        blurriest_images.append((score, os.path.basename(path)))
 
         if (idx + 1) % 50 == 0:
             progress_bar.progress((idx + 1) / len(image_paths))
@@ -200,25 +175,12 @@ def analyze_blur(dataset_folder, file_extension="*.jpg"):
     progress_bar.progress(1.0)
     status_text.empty()
 
-    blurriest_images.sort(key=lambda x: x[0])
-
     # Plotting
-    fig = plt.figure(figsize=(8, 5))
+    fig = plt.figure(figsize=(10, 6))
     plt.hist(blur_scores, bins=30, color='red', alpha=0.7)
     plt.title('Blur Score Distribution (Laplacian Variance)')
     plt.xlabel('Blur Score (Lower = Blurrier)')
     plt.ylabel('Count of Images')
-    
-    threshold = np.percentile(blur_scores, 10)
-    plt.axvline(x=threshold, color='black', linestyle='--', 
-                label=f'10% Percentile ({threshold:.1f})')
-    plt.legend()
-
-    # Report the worst offenders
-    with st.expander("🔍 Top 5 Blurriest Images", expanded=False):
-        for score, name in blurriest_images[:50]:
-            st.text(f"Image: {name} | Score: {score:.2f}")
-        st.caption(f"Recommended: Inspect images with score below {threshold:.1f}")
 
     return fig
 
@@ -277,8 +239,10 @@ def plot_class_distribution(label_folder, class_names):
     return fig
 
 
-def plot_aspect_ratio(label_folder, class_names):
-    """Plot bounding box aspect ratio distribution."""
+def plot_aspect_ratio_separate(label_folder, class_names):
+    """Plot bounding box aspect ratio distribution with separate subplot per class."""
+    import math
+    
     label_files = glob.glob(os.path.join(label_folder, "*.txt"))
     
     if not label_files:
@@ -289,7 +253,7 @@ def plot_aspect_ratio(label_folder, class_names):
 
     progress_bar = st.progress(0)
     status_text = st.empty()
-    status_text.text(f"Processing {len(label_files)} label files...")
+    status_text.text(f"Scanning {len(label_files)} label files...")
 
     for idx, file in enumerate(label_files):
         try:
@@ -313,23 +277,94 @@ def plot_aspect_ratio(label_folder, class_names):
     progress_bar.progress(1.0)
     status_text.empty()
 
-    # Plotting
-    fig = plt.figure(figsize=(7, 7))
-    
-    for name in class_names:
-        points = class_data[name]
+    # Determine grid size
+    num_classes = len(class_names)
+    cols = 4
+    rows = math.ceil(num_classes / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(20, 10))
+    axes = axes.flatten()
+
+    # Define colors for distinction
+    colors = ['blue', 'orange', 'green', 'red', 'purple', 'brown', 'pink', 'gray']
+
+    for i, class_name in enumerate(class_names):
+        ax = axes[i]
+        points = class_data[class_name]
+        
+        # Plot the dots
         if points:
             ws, hs = zip(*points)
-            plt.scatter(ws, hs, alpha=0.6, label=name, s=30)
+            ax.scatter(ws, hs, alpha=0.5, color=colors[i % len(colors)], s=15)
+        
+        # Add the 1:1 Square Line (Reference)
+        ax.plot([0, 1], [0, 1], 'k--', alpha=0.3, label="1:1 Ratio")
+        
+        # Formatting
+        ax.set_title(f"{class_name} ({len(points)})", fontsize=12, fontweight='bold')
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_xlabel('Width')
+        ax.set_ylabel('Height')
+        ax.grid(True, linestyle=':', alpha=0.6)
+        
+        # Highlight the "Square vs Diamond" Check
+        if class_name in ["square", "diamond"]:
+            ax.set_facecolor('#f0f8ff')  # Light blue background for attention
 
-    plt.plot([0, 1], [0, 1], 'k--', label="Square (1:1) Line", alpha=0.5)
-    plt.title('Bounding Box Aspect Ratio (Width vs Height)')
-    plt.xlabel('Normalized Width (0-1)')
-    plt.ylabel('Normalized Height (0-1)')
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.3)
+    # Hide empty subplots if any
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.suptitle('Aspect Ratio Distribution by Class', fontsize=16)
+    plt.tight_layout()
+
+    # Generate data table
+    table_data = []
+    for name in class_names:
+        points = class_data[name]
+        if not points:
+            table_data.append({
+                'Class Name': name,
+                'Count': 0,
+                'Mean W': '-',
+                'Mean H': '-',
+                'Aspect Ratio (W/H)': '-',
+                'Consistency (Std)': '-'
+            })
+            continue
+        
+        # Convert to numpy array for fast math
+        pts_array = np.array(points)
+        ws = pts_array[:, 0]
+        hs = pts_array[:, 1]
+        
+        # Calculate Ratios (Width / Height)
+        ratios = ws / hs 
+        
+        count = len(points)
+        mean_w = np.mean(ws)
+        mean_h = np.mean(hs)
+        mean_ratio = np.mean(ratios)
+        std_ratio = np.std(ratios)  # Low std dev = Very consistent shape
+        
+        table_data.append({
+            'Class Name': name,
+            'Count': count,
+            'Mean W': f"{mean_w:.3f}",
+            'Mean H': f"{mean_h:.3f}",
+            'Aspect Ratio (W/H)': f"{mean_ratio:.3f}",
+            'Consistency (Std)': f"{std_ratio:.3f}"
+        })
+    
+    # Display table in Streamlit
+    if table_data:
+        st.markdown("#### Aspect Ratio Statistics")
+        st.dataframe(
+            table_data,
+            use_container_width=True,
+            hide_index=True
+        )
 
     return fig
 
@@ -392,6 +427,80 @@ def plot_objects_per_image(label_folder):
     return fig
 
 
+def plot_image_sizes(dataset_folder, file_extension="*.jpg"):
+    """Plot image size distribution."""
+    image_paths = glob.glob(os.path.join(dataset_folder, file_extension))
+    
+    if not image_paths:
+        st.warning(f"No images found in {dataset_folder} with extension {file_extension}")
+        return None
+
+    widths = []
+    heights = []
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    status_text.text(f"Scanning dimensions of {len(image_paths)} images...")
+
+    for idx, path in enumerate(image_paths):
+        try:
+            with Image.open(path) as img:
+                w, h = img.size
+                widths.append(w)
+                heights.append(h)
+        except Exception as e:
+            st.warning(f"Error reading {path}: {e}")
+            continue
+
+        if (idx + 1) % 50 == 0:
+            progress_bar.progress((idx + 1) / len(image_paths))
+
+    progress_bar.progress(1.0)
+    status_text.empty()
+
+    if not widths:
+        st.warning("No valid images found.")
+        return None
+
+    # Plotting
+    fig = plt.figure(figsize=(10, 8))
+    
+    # Scatter plot
+    plt.scatter(widths, heights, color='blue', alpha=0.5, edgecolors='k', s=50)
+    
+    plt.title('Image Size Distribution (Width vs Height)')
+    plt.xlabel('Width (pixels)')
+    plt.ylabel('Height (pixels)')
+    plt.grid(True, linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+
+    # Console Report
+    avg_w = sum(widths) / len(widths)
+    avg_h = sum(heights) / len(heights)
+    
+    # Display statistics
+    st.markdown("#### Image Size Statistics")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Images", len(widths))
+    with col2:
+        st.metric("Max Size", f"{max(widths)}x{max(heights)}")
+    with col3:
+        st.metric("Min Size", f"{min(widths)}x{min(heights)}")
+    with col4:
+        st.metric("Average Size", f"{int(avg_w)}x{int(avg_h)}")
+    
+    # Check for consistency
+    unique_sizes = set(zip(widths, heights))
+    if len(unique_sizes) == 1:
+        st.success("✅ PERFECT CONSISTENCY: All images are exactly the same size.")
+    else:
+        st.warning(f"⚠️ VARIATION DETECTED: Found {len(unique_sizes)} different image sizes.")
+
+    return fig
+
+
 def select_folder_dialog(title="Select Folder"):
     """Open a folder selection dialog using tkinter."""
     if not TKINTER_AVAILABLE:
@@ -432,7 +541,7 @@ def render():
     )
 
     # Configuration section
-    with st.expander("📁 Dataset Configuration", expanded=True):
+    with st.expander("Dataset Configuration", expanded=True):
         # Initialize session state for folders (only if not already set)
         if 'dataset_folder' not in st.session_state:
             st.session_state['dataset_folder'] = ""
@@ -466,7 +575,7 @@ def render():
             
             # File uploader-style interface for folder selection
             if dataset_folder and os.path.exists(dataset_folder):
-                st.success(f"📁 Selected: {dataset_folder}")
+                st.success(f"Selected: {dataset_folder}")
             else:
                 st.info("No folder selected. Click 'Browse files' to select a folder.")
             
@@ -505,7 +614,7 @@ def render():
             
             # File uploader-style interface for folder selection
             if label_folder and os.path.exists(label_folder):
-                st.success(f"📁 Selected: {label_folder}")
+                st.success(f"Selected: {label_folder}")
             else:
                 st.info("No folder selected. Click 'Browse files' to select a folder.")
             
@@ -552,8 +661,9 @@ def render():
         "Color Distribution": ("analyze_color_distribution", "image"),
         "Brightness & Contrast": ("analyze_brightness_contrast", "image"),
         "Blur Detection": ("analyze_blur", "image"),
+        "Image Sizes": ("plot_image_sizes", "image"),
         "Class Distribution": ("plot_class_distribution", "label"),
-        "Aspect Ratio": ("plot_aspect_ratio", "label"),
+        "Aspect Ratio": ("plot_aspect_ratio_separate", "label"),
         "Objects per Image": ("plot_objects_per_image", "label"),
     }
 
@@ -627,6 +737,12 @@ def render():
                             st.pyplot(fig, use_container_width=True)
                             plt.close(fig)
 
+                    elif analysis_name == "Image Sizes":
+                        fig = plot_image_sizes(dataset_folder_final, file_extension)
+                        if fig:
+                            st.pyplot(fig, use_container_width=True)
+                            plt.close(fig)
+
                     elif analysis_name == "Class Distribution":
                         fig = plot_class_distribution(label_folder_final, class_names)
                         if fig:
@@ -634,7 +750,7 @@ def render():
                             plt.close(fig)
 
                     elif analysis_name == "Aspect Ratio":
-                        fig = plot_aspect_ratio(label_folder_final, class_names)
+                        fig = plot_aspect_ratio_separate(label_folder_final, class_names)
                         if fig:
                             st.pyplot(fig, use_container_width=True)
                             plt.close(fig)

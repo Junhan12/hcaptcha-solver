@@ -233,7 +233,7 @@ def render():
     
     # Check for required libraries
     if not CV2_AVAILABLE or not ALBUMENTATIONS_AVAILABLE:
-        st.error("⚠️ Required libraries not available. Please install: `pip install opencv-python albumentations`")
+        st.error("Required libraries not available. Please install: `pip install opencv-python albumentations`")
         return
     
     # Initialize session state for folders
@@ -268,7 +268,7 @@ def render():
             st.rerun()
     
     # Configuration section
-    with st.expander("📁 Folder Configuration", expanded=True):
+    with st.expander("Folder Configuration", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -276,7 +276,7 @@ def render():
             images_folder = st.session_state.get('aug_images_folder', '')
             
             if images_folder and os.path.exists(images_folder):
-                st.success(f"📁 Selected: {images_folder}")
+                st.success(f"Selected: {images_folder}")
             else:
                 st.info("No folder selected. Click 'Browse files' to select a folder.")
             
@@ -306,7 +306,7 @@ def render():
             labels_folder = st.session_state.get('aug_labels_folder', '')
             
             if labels_folder and os.path.exists(labels_folder):
-                st.success(f"📁 Selected: {labels_folder}")
+                st.success(f"Selected: {labels_folder}")
             else:
                 st.info("No folder selected. Click 'Browse files' to select a folder (optional).")
             
@@ -340,7 +340,7 @@ def render():
             output_folder = st.session_state.get('aug_output_folder', '')
             
             if output_folder and os.path.exists(output_folder):
-                st.success(f"📁 Selected: {output_folder}")
+                st.success(f"Selected: {output_folder}")
             else:
                 st.info("No folder selected. Click 'Browse files' to select output directory.")
             
@@ -382,7 +382,7 @@ def render():
     
     selected_augmentations = {}
     
-    with st.expander("🔄 Transformation Augmentations", expanded=True):
+    with st.expander("Transformation Augmentations", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -441,7 +441,7 @@ def render():
                     key="rotate_p"
                 )
     
-    with st.expander("🎨 Color & Brightness Augmentations", expanded=True):
+    with st.expander("Color & Brightness Augmentations", expanded=True):
         col1, col2 = st.columns(2)
         
         with col1:
@@ -504,7 +504,7 @@ def render():
                     key="gamma_max"
                 )
                 if gamma_min >= gamma_max:
-                    st.warning("⚠️ Gamma Min should be less than Gamma Max")
+                    st.warning("Gamma Min should be less than Gamma Max")
                 selected_augmentations['gamma_limit'] = (gamma_min, gamma_max)
                 selected_augmentations['exposure_p'] = st.slider(
                     "Gamma Probability",
@@ -516,7 +516,7 @@ def render():
                 )
     
     # Apply augmentation button
-    if st.button("🚀 Apply Augmentation", type="primary", use_container_width=True):
+    if st.button("Apply Augmentation", type="primary", use_container_width=True):
         # Get folder paths from session state
         images_folder = st.session_state.get('aug_images_folder', '')
         labels_folder = st.session_state.get('aug_labels_folder', '')
@@ -524,19 +524,19 @@ def render():
         
         # Validate inputs
         if not images_folder:
-            st.error("⚠️ Please select an images folder.")
+            st.error("Please select an images folder.")
             return
         
         if not os.path.exists(images_folder):
-            st.error(f"⚠️ Images folder not found: {images_folder}")
+            st.error(f"Images folder not found: {images_folder}")
             return
         
         if not output_folder:
-            st.error("⚠️ Please select an output directory.")
+            st.error("Please select an output directory.")
             return
         
         if not os.path.exists(output_folder):
-            st.error(f"⚠️ Output directory not found: {output_folder}")
+            st.error(f"Output directory not found: {output_folder}")
             return
         
         # Check if any augmentation is selected
@@ -549,7 +549,7 @@ def render():
         ])
         
         if not has_selection:
-            st.error("⚠️ Please select at least one augmentation.")
+            st.error("Please select at least one augmentation.")
             return
         
         # Set up output paths
@@ -558,7 +558,7 @@ def render():
         
         # Status container
         status_text = st.empty()
-        status_text.info("🔄 Starting augmentation process...")
+        status_text.info("Starting augmentation process...")
         
         try:
             # Progress tracking
@@ -586,7 +586,7 @@ def render():
             progress_text.empty()
             
             # Show completion
-            status_text.success(f"✅ Augmentation Complete! Processed {processed_count}/{total_images} images. Augmented images saved to: {save_images_dir}")
+            status_text.success(f"Augmentation Complete! Processed {processed_count}/{total_images} images. Augmented images saved to: {save_images_dir}")
             
             # Display summary
             st.markdown("### Augmentation Summary")
@@ -598,12 +598,12 @@ def render():
             with summary_col3:
                 st.metric("Total Augmented Images", processed_count * n_aug)
             
-            st.info(f"📁 **Output Location:**\n- Images: `{save_images_dir}`\n" + 
+            st.info(f"**Output Location:**\n- Images: `{save_images_dir}`\n" + 
                    (f"- Labels: `{save_labels_dir}`" if save_labels_dir else "- Labels: Not saved (no labels folder provided)"))
             
         except Exception as e:
-            status_text.error(f"❌ Error during augmentation: {e}")
+            status_text.error(f"Error during augmentation: {e}")
             st.code(traceback.format_exc())
     
     if not TKINTER_AVAILABLE:
-        st.info("💡 **Tip:** To use folder browser, install tkinter: `pip install tk` (Linux) or it's included with Python on Windows/Mac.")
+        st.info("**Tip:** To use folder browser, install tkinter: `pip install tk` (Linux) or it's included with Python on Windows/Mac.")

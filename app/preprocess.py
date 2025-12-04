@@ -14,11 +14,16 @@ except ImportError:
 
 
 def _bytes_to_cv2_image(img_bytes):
-    """Convert image bytes to OpenCV format (numpy array)."""
+    """
+    Convert image bytes to OpenCV format (numpy array).
+    Uses IMREAD_UNCHANGED to preserve original format (including alpha channel).
+    """
     if not CV2_AVAILABLE:
         raise ImportError("OpenCV (cv2) is required for preprocessing")
     nparr = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    # Use IMREAD_UNCHANGED to preserve original format (RGBA, BGRA, grayscale, etc.)
+    # This matches the notebook behavior which uses IMREAD_UNCHANGED
+    img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
     if img is None:
         raise ValueError("Failed to decode image bytes")
     return img
@@ -195,6 +200,7 @@ def apply_sharpen(img, params):
 def apply_grayscale(img, params):
     """
     Convert image to grayscale.
+    Matches notebook behavior: uses COLOR_BGRA2GRAY for 4-channel images.
     params: {} (no parameters needed, but can accept empty dict)
     """
     if not CV2_AVAILABLE:
@@ -204,16 +210,94 @@ def apply_grayscale(img, params):
     if len(img.shape) == 2:
         return img
     
-    # Check if image is BGR (3 channels)
-    if len(img.shape) == 3 and img.shape[2] == 3:
-        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Check if image is BGRA (4 channels)
-    if len(img.shape) == 3 and img.shape[2] == 4:
-        return cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+    # Check image channels and convert appropriately
+    if len(img.shape) == 3:
+        num_channels = img.shape[2]
+        
+        # BGRA (4 channels) - matches notebook behavior
+        if num_channels == 4:
+            return cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+        
+        # BGR (3 channels)
+        elif num_channels == 3:
+            return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # RGBA (4 channels) - handle if needed
+        # Note: OpenCV uses BGR by default, but if image is RGBA, 
+        # we'd need to convert BGR first, but IMREAD_UNCHANGED should preserve format
     
     # If already grayscale or unknown format, return as is
     return img
+
+
+def resize_labels(label_content, resize_info):
+    """
+    Resize YOLO format labels based on image resize information.
+    
+    Args:
+        label_content: str - Content of YOLO label file (each line: class_id x_center y_center width height)
+        resize_info: dict - Resize information from apply_resize function
+    
+    Returns:
+        str - Resized label content
+    """
+    if not resize_info or resize_info.get("scale_w") == 1.0 and resize_info.get("scale_h") == 1.0:
+        # No resize occurred, return original
+        return label_content
+    
+    scale_w = resize_info.get("scale_w", 1.0)
+    scale_h = resize_info.get("scale_h", 1.0)
+    maintain_aspect = resize_info.get("maintain_aspect", False)
+    
+    # If maintain_aspect is True, use uniform scale
+    if maintain_aspect:
+        scale = min(scale_w, scale_h)
+        scale_w = scale
+        scale_h = scale
+    
+    lines = label_content.strip().split('\n')
+    resized_lines = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            resized_lines.append(line)
+            continue
+        
+        parts = line.split()
+        if len(parts) < 5:
+            # Invalid line, keep as is
+            resized_lines.append(line)
+            continue
+        
+        try:
+            class_id = parts[0]
+            x_center = float(parts[1])
+            y_center = float(parts[2])
+            width = float(parts[3])
+            height = float(parts[4])
+            
+            # Apply scaling to normalized coordinates
+            x_center_new = x_center * scale_w
+            y_center_new = y_center * scale_h
+            width_new = width * scale_w
+            height_new = height * scale_h
+            
+            # Ensure coordinates stay within [0, 1] bounds
+            x_center_new = max(0.0, min(1.0, x_center_new))
+            y_center_new = max(0.0, min(1.0, y_center_new))
+            width_new = max(0.0, min(1.0, width_new))
+            height_new = max(0.0, min(1.0, height_new))
+            
+            # Reconstruct line
+            resized_line = f"{class_id} {x_center_new:.6f} {y_center_new:.6f} {width_new:.6f} {height_new:.6f}"
+            resized_lines.append(resized_line)
+            
+        except (ValueError, IndexError):
+            # Invalid format, keep original line
+            resized_lines.append(line)
+    
+    return '\n'.join(resized_lines)
 
 
 def apply_resize(img, params):
@@ -232,12 +316,40 @@ def apply_resize(img, params):
         - {"width": 640, "height": 480} - resize to exact dimensions
         - {"width": 640, "maintain_aspect": true} - resize width, auto height
         - {"height": 480, "maintain_aspect": true} - resize height, auto width
+    
+    Returns:
+        tuple: (resized_img, resize_info)
+        - resized_img: The resized image
+        - resize_info: dict with keys:
+            - "original_width": int
+            - "original_height": int
+            - "new_width": int
+            - "new_height": int
+            - "scale_w": float (width scale factor)
+            - "scale_h": float (height scale factor)
+            - "maintain_aspect": bool
     """
     if not CV2_AVAILABLE:
         raise ImportError("OpenCV (cv2) is required for resize")
     
+    # Validate image shape
+    if img is None:
+        raise ValueError("Image is None, cannot resize")
+    if not hasattr(img, 'shape') or len(img.shape) < 2:
+        raise ValueError(f"Invalid image shape: {img.shape if hasattr(img, 'shape') else 'no shape attribute'}")
+    
     # Get current image dimensions
-    h, w = img.shape[:2]
+    # Handle both 2D (grayscale) and 3D (color) images
+    if len(img.shape) == 2:
+        # Grayscale image: shape is (height, width)
+        h, w = img.shape
+    elif len(img.shape) == 3:
+        # Color image: shape is (height, width, channels)
+        h, w = img.shape[:2]
+    else:
+        raise ValueError(f"Unexpected image shape: {img.shape}, expected 2D or 3D array")
+    
+    original_w, original_h = w, h
     
     # Get target dimensions
     target_width = params.get("width")
@@ -258,7 +370,16 @@ def apply_resize(img, params):
     # Calculate target dimensions
     if target_width is None and target_height is None:
         # No dimensions specified, return original
-        return img
+        resize_info = {
+            "original_width": original_w,
+            "original_height": original_h,
+            "new_width": original_w,
+            "new_height": original_h,
+            "scale_w": 1.0,
+            "scale_h": 1.0,
+            "maintain_aspect": maintain_aspect
+        }
+        return img, resize_info
     
     if maintain_aspect:
         # Calculate missing dimension to maintain aspect ratio
@@ -289,9 +410,32 @@ def apply_resize(img, params):
     target_width = max(1, target_width)
     target_height = max(1, target_height)
     
+    # Calculate scale factors
+    scale_w = target_width / original_w
+    scale_h = target_height / original_h
+    
+    # If maintain_aspect is True, use uniform scale
+    if maintain_aspect:
+        scale = min(scale_w, scale_h)
+        scale_w = scale
+        scale_h = scale
+    
     # Perform resize
-    return cv2.resize(img, (target_width, target_height), 
-                      interpolation=interpolation)
+    resized_img = cv2.resize(img, (target_width, target_height), 
+                              interpolation=interpolation)
+    
+    # Create resize info
+    resize_info = {
+        "original_width": original_w,
+        "original_height": original_h,
+        "new_width": target_width,
+        "new_height": target_height,
+        "scale_w": scale_w,
+        "scale_h": scale_h,
+        "maintain_aspect": maintain_aspect
+    }
+    
+    return resized_img, resize_info
 
 
 # Operation registry
@@ -326,19 +470,22 @@ def apply_preprocess(img_bytes, preprocess_profile):
         - applied_steps_info: List of dicts with operation names that were applied
     """
     if not CV2_AVAILABLE:
-        return img_bytes, []
+        return img_bytes, [], None
     
     if not preprocess_profile:
-        return img_bytes, []
+        return img_bytes, [], None
     
     steps = preprocess_profile.get("steps", [])
     if not steps:
-        return img_bytes, []
+        return img_bytes, [], None
     
     try:
         # Convert bytes to OpenCV image
         img = _bytes_to_cv2_image(img_bytes)
         applied = []
+        
+        # Track resize info for label processing
+        resize_info = None
         
         # Apply each step in sequence
         for step in steps:
@@ -351,7 +498,13 @@ def apply_preprocess(img_bytes, preprocess_profile):
             
             try:
                 operation_func = OPERATION_REGISTRY[operation_name]
-                img = operation_func(img, params)
+                
+                # Special handling for resize operation (returns tuple)
+                if operation_name == "resize":
+                    img, resize_info = operation_func(img, params)
+                else:
+                    img = operation_func(img, params)
+                
                 applied.append({"operation": operation_name, "params": params})
             except Exception as e:
                 print(f"Error applying {operation_name}: {e}")
@@ -360,11 +513,11 @@ def apply_preprocess(img_bytes, preprocess_profile):
         
         # Convert back to bytes
         processed_bytes = _cv2_image_to_bytes(img, format='JPG')
-        return processed_bytes, applied
+        return processed_bytes, applied, resize_info
         
     except Exception as e:
         print(f"Preprocessing error: {e}")
         # Return original bytes on failure
-        return img_bytes, []
+        return img_bytes, [], None
 
 
