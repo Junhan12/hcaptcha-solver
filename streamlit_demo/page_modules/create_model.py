@@ -79,7 +79,9 @@ def render():
         
         # Preprocessing profile selection
         st.markdown("#### Preprocessing Profile (Optional)")
-        preprocess_options = ["None"] + [f"{p.get('name', 'Unnamed')} ({p.get('preprocess_id', 'N/A')})" for p in preprocess_profiles]
+        # Sort by preprocess_id in ascending order
+        sorted_preprocess = sorted(preprocess_profiles, key=lambda p: p.get('preprocess_id', ''))
+        preprocess_options = ["None"] + [f"{p.get('name', 'Unnamed')} ({p.get('preprocess_id', 'N/A')})" for p in sorted_preprocess]
         selected_preprocess_display = st.selectbox(
             "Select Preprocessing Profile",
             options=preprocess_options,
@@ -88,7 +90,9 @@ def render():
         
         # Postprocessing profile selection
         st.markdown("#### Postprocessing Profile (Optional)")
-        postprocess_options = ["None"] + [f"{p.get('name', 'Unnamed')} ({p.get('postprocess_id', 'N/A')})" for p in postprocess_profiles]
+        # Sort by postprocess_id in ascending order
+        sorted_postprocess = sorted(postprocess_profiles, key=lambda p: p.get('postprocess_id', ''))
+        postprocess_options = ["None"] + [f"{p.get('name', 'Unnamed')} ({p.get('postprocess_id', 'N/A')})" for p in sorted_postprocess]
         selected_postprocess_display = st.selectbox(
             "Select Postprocessing Profile",
             options=postprocess_options,
@@ -204,7 +208,9 @@ def render():
         if not models:
             st.warning("No models found in MongoDB.")
         else:
-            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in models}
+            # Sort models by model_id in ascending order to ensure consistent dropdown ordering
+            sorted_models = sorted(models, key=lambda m: m.get('model_id', ''))
+            model_options = {f"{m.get('model_name', 'Unknown')} ({m.get('model_id', 'N/A')})": m.get('model_id') for m in sorted_models}
             selected_delete_model_name = st.selectbox(
                 "Select Model to Delete",
                 options=list(model_options.keys()),
@@ -266,7 +272,7 @@ def render():
                 df_models = pd.DataFrame(models_data)
                 st.dataframe(
                     df_models,
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True,
                     column_config={
                         "Model ID": st.column_config.TextColumn(

@@ -362,7 +362,7 @@ def plot_aspect_ratio_separate(label_folder, class_names):
         st.markdown("#### Aspect Ratio Statistics")
         st.dataframe(
             table_data,
-            use_container_width=True,
+            width='stretch',
             hide_index=True
         )
 
@@ -581,7 +581,7 @@ def render():
             
             # Browse button styled like file uploader
             if TKINTER_AVAILABLE:
-                if st.button("Browse dataset folder", key="browse_dataset_btn", use_container_width=True, type="primary"):
+                if st.button("Browse dataset folder", key="browse_dataset_btn", width='stretch', type="primary"):
                     st.session_state['browse_dataset'] = True
                     st.rerun()
             else:
@@ -620,7 +620,7 @@ def render():
             
             # Browse button styled like file uploader
             if TKINTER_AVAILABLE:
-                if st.button("Browse label folder", key="browse_label_btn", use_container_width=True, type="primary"):
+                if st.button("Browse label folder", key="browse_label_btn", width='stretch', type="primary"):
                     st.session_state['browse_label'] = True
                     st.rerun()
             else:
@@ -722,43 +722,43 @@ def render():
                     if analysis_name == "Color Distribution":
                         fig = analyze_color_distribution(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
                     elif analysis_name == "Brightness & Contrast":
                         fig = analyze_brightness_contrast(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
                     elif analysis_name == "Blur Detection":
                         fig = analyze_blur(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
                     elif analysis_name == "Image Sizes":
                         fig = plot_image_sizes(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
                     elif analysis_name == "Class Distribution":
                         fig = plot_class_distribution(label_folder_final, class_names)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
                     elif analysis_name == "Aspect Ratio":
                         fig = plot_aspect_ratio_separate(label_folder_final, class_names)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
                     elif analysis_name == "Objects per Image":
                         fig = plot_objects_per_image(label_folder_final)
                         if fig:
-                            st.pyplot(fig, use_container_width=True)
+                            st.pyplot(fig, width='stretch')
                             plt.close(fig)
 
             except Exception as e:

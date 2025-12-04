@@ -481,7 +481,7 @@ def render():
             st.info("No folder selected. Click 'Browse files' to select output directory.")
         
         if TKINTER_AVAILABLE:
-            if st.button("Browse files", key="browse_crawl_output_btn", use_container_width=True, type="primary"):
+            if st.button("Browse files", key="browse_crawl_output_btn", width='stretch', type="primary"):
                 st.session_state['browse_crawl_output'] = True
                 st.rerun()
         else:
@@ -513,7 +513,7 @@ def render():
     st.markdown("---")
     
     # Start crawling button
-    if st.button("Start Crawling", key="start_crawl_button", type="primary", use_container_width=True):
+    if st.button("Start Crawling", key="start_crawl_button", type="primary", width='stretch'):
         output_folder = st.session_state.get('crawl_output_folder', '')
         
         # Validate inputs
@@ -553,7 +553,7 @@ def render():
                     
                     import pandas as pd
                     df_challenges = pd.DataFrame(challenge_data)
-                    st.dataframe(df_challenges, use_container_width=True, hide_index=True)
+                    st.dataframe(df_challenges, width='stretch', hide_index=True)
                 
                 # Display questions encountered
                 if summary["questions"]:

@@ -265,9 +265,11 @@ def render():
         if not preprocess_profiles:
             st.warning("No preprocessing profiles found in MongoDB. Please create a preprocessing profile first in the 'Create and Upload Model' section.")
         else:
-            # Create options for selectbox
+            # Create options for selectbox, sorted by preprocess_id in ascending order
             profile_options = {}
-            for profile in preprocess_profiles:
+            # Sort profiles by preprocess_id to ensure ascending order
+            sorted_profiles = sorted(preprocess_profiles, key=lambda p: p.get('preprocess_id', ''))
+            for profile in sorted_profiles:
                 preprocess_id = profile.get('preprocess_id', 'N/A')
                 name = profile.get('name', 'Unnamed')
                 # Create display name: "Name (ID)" or just "ID" if no name
@@ -329,7 +331,7 @@ def render():
                     df_steps = pd.DataFrame(steps_data)
                     st.dataframe(
                         df_steps,
-                        use_container_width=True,
+                        width='stretch',
                         hide_index=True,
                         column_config={
                             "Step": st.column_config.NumberColumn(
@@ -400,7 +402,7 @@ def render():
                             st.info("No folder selected. Click 'Browse files' to select a folder.")
                         
                         if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_input_btn", use_container_width=True, type="primary"):
+                            if st.button("Browse files", key="browse_input_btn", width='stretch', type="primary"):
                                 st.session_state['browse_input_folder'] = True
                                 st.rerun()
                         else:
@@ -430,7 +432,7 @@ def render():
                             st.info("No folder selected. Click 'Browse files' to select output directory.")
                         
                         if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_output_btn", use_container_width=True, type="primary"):
+                            if st.button("Browse files", key="browse_output_btn", width='stretch', type="primary"):
                                 st.session_state['browse_output_folder'] = True
                                 st.rerun()
                         else:
@@ -460,7 +462,7 @@ def render():
                             st.info("No folder selected. Optional - only needed if resize is applied.")
                         
                         if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_labels_btn", use_container_width=True, type="primary"):
+                            if st.button("Browse files", key="browse_labels_btn", width='stretch', type="primary"):
                                 st.session_state['browse_labels_folder'] = True
                                 st.rerun()
                         else:
@@ -481,7 +483,7 @@ def render():
                                 st.warning(f"Path not found")
                 
                 # Batch process button
-                if preprocess_profile and st.button("Process Folder", key="process_folder_button", type="primary", use_container_width=True):
+                if preprocess_profile and st.button("Process Folder", key="process_folder_button", type="primary", width='stretch'):
                     # Get folder paths from session state
                     input_folder = st.session_state.get('preprocess_input_folder', '')
                     output_folder = st.session_state.get('preprocess_output_folder', '')
@@ -561,7 +563,7 @@ def render():
                 )
                 
                 if uploaded_image and preprocess_profile:
-                    if st.button("Apply Preprocessing", key="apply_preprocess_button", type="primary", use_container_width=True):
+                    if st.button("Apply Preprocessing", key="apply_preprocess_button", type="primary", width='stretch'):
                         try:
                             # Read original image bytes
                             original_img_bytes = uploaded_image.read()
@@ -595,7 +597,7 @@ def render():
                                 st.image(
                                     original_img,
                                     caption=f"Original ({original_img.size[0]} × {original_img.size[1]})",
-                                    use_container_width=True
+                                    width='stretch'
                                 )
                             
                             # Store all step images for display after processing
@@ -638,7 +640,7 @@ def render():
                                     st.image(
                                         step_img,
                                         caption=f"{operation_name.capitalize()} ({step_width} × {step_height})",
-                                        use_container_width=True
+                                        width='stretch'
                                     )
                             
                             # Display final summary
