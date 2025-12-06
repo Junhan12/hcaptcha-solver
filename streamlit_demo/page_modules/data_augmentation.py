@@ -228,6 +228,15 @@ def augment_images(
 
 def render():
     """Render the Data Augmentation page."""
+    # Add CSS to make buttons full-width
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button {
+            width: 100%;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.header("Data Augmentation")
     st.info("Apply data augmentation techniques to expand your training dataset.")
     
@@ -281,7 +290,7 @@ def render():
                 st.info("No folder selected. Click 'Browse files' to select a folder.")
             
             if TKINTER_AVAILABLE:
-                if st.button("Browse files", key="browse_images_btn", width='stretch', type="primary"):
+                if st.button("Browse files", key="browse_images_btn", type="primary"):
                     st.session_state['browse_images_folder'] = True
                     st.rerun()
             else:
@@ -311,7 +320,7 @@ def render():
                 st.info("No folder selected. Click 'Browse files' to select a folder (optional).")
             
             if TKINTER_AVAILABLE:
-                if st.button("Browse files", key="browse_labels_btn", width='stretch', type="primary"):
+                if st.button("Browse files", key="browse_labels_btn", type="primary"):
                     st.session_state['browse_labels_folder'] = True
                     st.rerun()
             else:
@@ -345,7 +354,7 @@ def render():
                 st.info("No folder selected. Click 'Browse files' to select output directory.")
             
             if TKINTER_AVAILABLE:
-                if st.button("Browse files", key="browse_output_btn", width='stretch', type="primary"):
+                if st.button("Browse files", key="browse_output_btn", type="primary"):
                     st.session_state['browse_output_folder'] = True
                     st.rerun()
             else:
@@ -516,7 +525,7 @@ def render():
                 )
     
     # Apply augmentation button
-    if st.button("Apply Augmentation", type="primary", width='stretch'):
+    if st.button("Apply Augmentation", type="primary"):
         # Get folder paths from session state
         images_folder = st.session_state.get('aug_images_folder', '')
         labels_folder = st.session_state.get('aug_labels_folder', '')

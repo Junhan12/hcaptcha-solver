@@ -146,7 +146,7 @@ def render(progress, status):
                                         else:
                                             caption = f"{filename} (Challenge {challenge_idx}) - No Detections ({processed_width} × {processed_height})"
 
-                                        st.image(img, caption=caption, width=processed_width)
+                                        st.image(img, caption=caption, width='stretch')
                                     except Exception as e:
                                         st.error(f"Failed to display image: {e}")
                                 else:
@@ -157,7 +157,7 @@ def render(progress, status):
                                             img_bytes = base64.b64decode(b64_part)
                                             fallback_img = Image.open(io.BytesIO(img_bytes))
                                             fallback_width, fallback_height = fallback_img.size
-                                            st.image(fallback_img, caption=f"{filename} (Challenge {challenge_idx}) - Original Image ({fallback_width} × {fallback_height})", width=fallback_width)
+                                            st.image(fallback_img, caption=f"{filename} (Challenge {challenge_idx}) - Original Image ({fallback_width} × {fallback_height})", width='stretch')
                                         except Exception:
                                             st.write(f"{filename} (Challenge {challenge_idx})")
                                     else:
@@ -470,7 +470,7 @@ def render(progress, status):
                                     else:
                                         caption = f"{filename} - No Detections ({processed_width} × {processed_height})"
 
-                                    st.image(img, caption=caption, width=processed_width)
+                                    st.image(img, caption=caption, width='stretch')
                                 except Exception as e:
                                     st.error(f"Failed to display image: {e}")
                             else:
@@ -480,7 +480,7 @@ def render(progress, status):
                                         img_bytes = base64.b64decode(b64_part)
                                         fallback_img = Image.open(io.BytesIO(img_bytes))
                                         fallback_width, fallback_height = fallback_img.size
-                                        st.image(fallback_img, caption=f"{filename} - Original Image ({fallback_width} × {fallback_height})", width=fallback_width)
+                                        st.image(fallback_img, caption=f"{filename} - Original Image ({fallback_width} × {fallback_height})", width='stretch')
                                     except Exception:
                                         st.write(f"{filename}")
 
@@ -667,7 +667,7 @@ def render(progress, status):
                                     else:
                                         caption = f"Processed Image (No Detections) ({processed_width} × {processed_height})"
 
-                                    st.image(img, caption=caption, width=processed_width)
+                                    st.image(img, caption=caption, width='stretch')
                                 except Exception as e:
                                     st.error(f"Failed to display image: {e}")
                             else:
@@ -677,7 +677,7 @@ def render(progress, status):
                                         img_bytes = base64.b64decode(b64_part)
                                         fallback_img = Image.open(io.BytesIO(img_bytes))
                                         fallback_width, fallback_height = fallback_img.size
-                                        st.image(fallback_img, caption=f"{filename} - Original Image ({fallback_width} × {fallback_height})", width=fallback_width)
+                                        st.image(fallback_img, caption=f"{filename} - Original Image ({fallback_width} × {fallback_height})", width='stretch')
                                     except Exception:
                                         st.write(f"{filename}")
 
