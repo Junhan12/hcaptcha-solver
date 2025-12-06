@@ -523,6 +523,15 @@ def select_folder_dialog(title="Select Folder"):
 
 def render():
     """Render the View EDA page."""
+    # Add CSS to make buttons full-width
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button {
+            width: 100%;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.header("View EDA (Exploratory Data Analysis)")
     st.info("This section provides exploratory data analysis of your collected dataset.")
     
@@ -581,7 +590,7 @@ def render():
             
             # Browse button styled like file uploader
             if TKINTER_AVAILABLE:
-                if st.button("Browse dataset folder", key="browse_dataset_btn", width='stretch', type="primary"):
+                if st.button("Browse dataset folder", key="browse_dataset_btn", type="primary"):
                     st.session_state['browse_dataset'] = True
                     st.rerun()
             else:
@@ -620,7 +629,7 @@ def render():
             
             # Browse button styled like file uploader
             if TKINTER_AVAILABLE:
-                if st.button("Browse label folder", key="browse_label_btn", width='stretch', type="primary"):
+                if st.button("Browse label folder", key="browse_label_btn", type="primary"):
                     st.session_state['browse_label'] = True
                     st.rerun()
             else:
