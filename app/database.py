@@ -72,12 +72,13 @@ def _find_challenge_type_for_question(question):
 def validate_question_and_get_model(question):
     """
     Validate question for keywords and retrieve corresponding model from MongoDB.
-    Returns model document if keywords found, None otherwise.
+    Returns model document only if challenge_type matches and has a model_id.
+    Returns None if no challenge_type matches or challenge_type has no model_id.
     """
     if not question or not _db_available():
         return None
     
-    # Prefer dynamic mapping via challenge_type keywords
+    # Only get model if challenge_type matches
     ct_doc = _find_challenge_type_for_question(question)
     if ct_doc:
         model_id = ct_doc.get("model_id")
@@ -86,16 +87,11 @@ def validate_question_and_get_model(question):
                 return _db.model.find_one({"model_id": model_id})
             except Exception:
                 return None
-        # If challenge_type found but no model_id, fall through to active model
-    # Fallback: active model or most recent
-    try:
-        active_model = _db.model.find_one({"is_active": True})
-        if active_model:
-            return active_model
-        recent_model = _db.model.find_one({}, sort=[("_id", -1)])
-        return recent_model
-    except Exception:
+        # If challenge_type found but no model_id, return None
         return None
+    
+    # No challenge_type match - return None (do not fallback to active/recent model)
+    return None
 
 
 def get_model_config(question):

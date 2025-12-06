@@ -49,8 +49,8 @@ if main_section == "8. hCAPTCHA Demo":
         (
             "8a. Upload Image for Inference",
             "8b. Auto Crawler, Solver, and Clicker",
-        ),
-    )
+    ),
+)
 
 progress = st.progress(0)
 status = st.empty()

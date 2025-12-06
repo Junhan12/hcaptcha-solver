@@ -446,6 +446,15 @@ def run_crawl_and_save_locally(output_dir, max_rounds=20):
 
 def render():
     """Render the Auto Crawl Dataset page."""
+    # Add CSS to make buttons full-width
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button {
+            width: 100%;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.header("Auto Crawl Dataset")
     st.info("Automatically crawl hCAPTCHA challenges and save images to local directory organized by challenge type.")
     
@@ -481,7 +490,7 @@ def render():
             st.info("No folder selected. Click 'Browse files' to select output directory.")
         
         if TKINTER_AVAILABLE:
-            if st.button("Browse files", key="browse_crawl_output_btn", width='stretch', type="primary"):
+            if st.button("Browse files", key="browse_crawl_output_btn", type="primary"):
                 st.session_state['browse_crawl_output'] = True
                 st.rerun()
         else:
@@ -513,7 +522,7 @@ def render():
     st.markdown("---")
     
     # Start crawling button
-    if st.button("Start Crawling", key="start_crawl_button", type="primary", width='stretch'):
+    if st.button("Start Crawling", key="start_crawl_button", type="primary"):
         output_folder = st.session_state.get('crawl_output_folder', '')
         
         # Validate inputs

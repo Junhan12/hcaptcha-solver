@@ -178,7 +178,7 @@ elif main_section == "3. Data Preprocessing":
                                 original_img_bytes = uploaded_image.read()
                                 
                                 # Apply preprocessing
-                                processed_img_bytes, applied_steps = apply_preprocess(original_img_bytes, preprocess_profile)
+                                processed_img_bytes, applied_steps, _ = apply_preprocess(original_img_bytes, preprocess_profile)
                                 
                                 # Display results
                                 st.markdown("### Preprocessing Results")
@@ -558,7 +558,7 @@ elif main_section == "6. Model Training Evaluation":
                                                 processed_img_bytes = img_bytes
                                                 if preprocess_profile:
                                                     try:
-                                                        processed_img_bytes, _ = apply_preprocess(img_bytes, preprocess_profile)
+                                                        processed_img_bytes, _, _ = apply_preprocess(img_bytes, preprocess_profile)
                                                     except Exception as e:
                                                         st.warning(f"Preprocessing failed for {os.path.basename(img_path)}: {e}")
                                                         processed_img_bytes = img_bytes

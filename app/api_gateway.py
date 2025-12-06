@@ -71,10 +71,31 @@ def solve_hcaptcha():
     challenge_type_matched = False
     challenge_id = None
     
+    # Find challenge_type and get model directly from it
+    ct_doc = None
+    model_doc = None
+    challenge_type_matched = False
+    challenge_id = None
+    
     if question:
         ct_doc = _find_challenge_type_for_question(question)
         if ct_doc:
             challenge_type_matched = True
+            challenge_type_id = ct_doc.get("challenge_type_id")
+            print(f"Challenge type matched: {challenge_type_id}")
+            
+            # Get model directly from challenge_type document
+            model_id = ct_doc.get("model_id")
+            if model_id:
+                from .database import get_model_by_id
+                model_doc = get_model_by_id(model_id)
+                if model_doc:
+                    print(f"Model found: {model_id}")
+                else:
+                    print(f"Warning: challenge_type {challenge_type_id} has model_id {model_id}, but model not found in database")
+            else:
+                print(f"Warning: challenge_type {challenge_type_id} has no model_id set")
+            
             # Only save challenge if it matches a challenge_type
             challenge_id = f"ch-{int(t0)}"
             try:
@@ -85,6 +106,7 @@ def solve_hcaptcha():
                 challenge_id=challenge_id,
                 challenge_questions=question or "",
                 challenge_img=payload_img,
+                challenge_type_id=challenge_type_id,
             )
         else:
             # No matching challenge_type - don't save challenge
@@ -94,11 +116,6 @@ def solve_hcaptcha():
         # No question provided - don't save challenge
         print("No question provided - skipping challenge save")
     
-    # Retrieve model based on challenge_type.model_id (only if challenge was created)
-    model_doc = None
-    if challenge_id:
-        model_doc = get_model_for_challenge(challenge_id)
-    
     # Apply preprocessing if model has preprocess_id
     preprocess_meta = None
     processed_img_bytes = img_bytes
@@ -106,7 +123,7 @@ def solve_hcaptcha():
         try:
             profile = get_preprocess_for_model(model_doc)
             if profile:
-                processed_img_bytes, applied_steps = apply_preprocess(img_bytes, profile)
+                processed_img_bytes, applied_steps, _ = apply_preprocess(img_bytes, profile)
                 preprocess_meta = {
                     'preprocess_id': profile.get('preprocess_id'),
                     'applied_steps': applied_steps,
@@ -290,8 +307,10 @@ def solve_hcaptcha_batch():
     image_names = []
     compressed_images = []
     
-    # Check if question matches any challenge_type before saving
-    from .database import _find_challenge_type_for_question
+    # Find challenge_type and get model directly from it
+    from .database import _find_challenge_type_for_question, get_model_by_id
+    ct_doc = None
+    model_doc = None
     challenge_type_matched = False
     single_challenge_id = None
     
@@ -299,12 +318,27 @@ def solve_hcaptcha_batch():
         ct_doc = _find_challenge_type_for_question(question)
         if ct_doc:
             challenge_type_matched = True
+            challenge_type_id = ct_doc.get("challenge_type_id")
+            print(f"Challenge type matched: {challenge_type_id}")
+            
+            # Get model directly from challenge_type document
+            model_id = ct_doc.get("model_id")
+            if model_id:
+                model_doc = get_model_by_id(model_id)
+                if model_doc:
+                    print(f"Model found: {model_id}")
+                else:
+                    print(f"Warning: challenge_type {challenge_type_id} has model_id {model_id}, but model not found in database")
+            else:
+                print(f"Warning: challenge_type {challenge_type_id} has no model_id set")
+            
             # Only save challenge if it matches a challenge_type
             single_challenge_id = f"ch-{int(t0)}"
             create_challenge(
                 challenge_id=single_challenge_id,
                 challenge_questions=question or "",
                 challenge_img=[],  # Will be populated after preprocessing
+                challenge_type_id=challenge_type_id,
             )
         else:
             # No matching challenge_type - don't save challenge
@@ -313,11 +347,6 @@ def solve_hcaptcha_batch():
     else:
         # No question provided - don't save challenge
         print("No question provided - skipping challenge save")
-    
-    # Retrieve model once based on derived challenge_type (only if challenge was created)
-    model_doc = None
-    if single_challenge_id:
-        model_doc = get_model_for_challenge(single_challenge_id)
     
     # Get preprocessing profile if model has preprocess_id
     preprocess_profile = None
@@ -357,7 +386,7 @@ def solve_hcaptcha_batch():
         if preprocess_profile:
             print("start applying preprocessing")
             try:
-                processed_img_bytes, _ = apply_preprocess(img_bytes, preprocess_profile)
+                processed_img_bytes, _, _ = apply_preprocess(img_bytes, preprocess_profile)
                 print(f"Preprocessed image {idx} successfully")
             except Exception as e:
                 print(f"Preprocessing error for image {idx}: {e}")

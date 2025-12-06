@@ -56,6 +56,15 @@ def select_folder_dialog(title="Select Folder"):
 
 def render():
     """Render the Model Training page."""
+    # Add CSS to make buttons full-width
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button {
+            width: 100%;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.markdown("## Model Training")
     st.markdown("Configure and train a YOLO model using your dataset.")
     
@@ -120,7 +129,7 @@ def render():
         st.info("No output directory selected. Click 'Browse files' to select a directory.")
     
     if TKINTER_AVAILABLE:
-        if st.button("Browse files", key="browse_output_btn", width='stretch', type="primary"):
+        if st.button("Browse files", key="browse_output_btn", type="primary"):
             st.session_state['browse_output_dir'] = True
             st.rerun()
     else:
@@ -289,7 +298,7 @@ def render():
     # Section 4: Start Training
     st.markdown("### 4. Start Training")
     
-    if st.button("🚀 Start Training", type="primary", width='stretch'):
+    if st.button("🚀 Start Training", type="primary"):
         # Validate inputs
         if not data_yaml_path:
             st.error("Please upload a data.yaml file.")

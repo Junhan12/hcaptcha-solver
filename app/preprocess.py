@@ -221,7 +221,7 @@ def apply_grayscale(img, params):
         # BGR (3 channels)
         elif num_channels == 3:
             return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
+    
         # RGBA (4 channels) - handle if needed
         # Note: OpenCV uses BGR by default, but if image is RGBA, 
         # we'd need to convert BGR first, but IMREAD_UNCHANGED should preserve format
@@ -447,7 +447,7 @@ OPERATION_REGISTRY = {
     "laplacian": apply_laplacian,
     "addweighted": apply_addweighted,
     "grayscale": apply_grayscale,
-    "sharpen": apply_sharpen,
+    "sharpen": apply_sharpen,          
     "resize": apply_resize,
 }
 

@@ -256,6 +256,15 @@ def apply_preprocess_step_by_step(img_bytes, preprocess_profile):
 
 def render():
     """Render the Data Preprocessing page."""
+    # Add CSS to make buttons full-width
+    st.markdown("""
+        <style>
+        div[data-testid="stButton"] > button {
+            width: 100%;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
     st.header("Data Preprocessing")
     st.info("Select a preprocessing profile and upload images to apply the preprocessing steps.")
     
@@ -402,7 +411,7 @@ def render():
                             st.info("No folder selected. Click 'Browse files' to select a folder.")
                         
                         if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_input_btn", width='stretch', type="primary"):
+                            if st.button("Browse files", key="browse_input_btn", type="primary"):
                                 st.session_state['browse_input_folder'] = True
                                 st.rerun()
                         else:
@@ -432,7 +441,7 @@ def render():
                             st.info("No folder selected. Click 'Browse files' to select output directory.")
                         
                         if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_output_btn", width='stretch', type="primary"):
+                            if st.button("Browse files", key="browse_output_btn", type="primary"):
                                 st.session_state['browse_output_folder'] = True
                                 st.rerun()
                         else:
@@ -462,7 +471,7 @@ def render():
                             st.info("No folder selected. Optional - only needed if resize is applied.")
                         
                         if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_labels_btn", width='stretch', type="primary"):
+                            if st.button("Browse files", key="browse_labels_btn", type="primary"):
                                 st.session_state['browse_labels_folder'] = True
                                 st.rerun()
                         else:
@@ -483,7 +492,7 @@ def render():
                                 st.warning(f"Path not found")
                 
                 # Batch process button
-                if preprocess_profile and st.button("Process Folder", key="process_folder_button", type="primary", width='stretch'):
+                if preprocess_profile and st.button("Process Folder", key="process_folder_button", type="primary"):
                     # Get folder paths from session state
                     input_folder = st.session_state.get('preprocess_input_folder', '')
                     output_folder = st.session_state.get('preprocess_output_folder', '')
@@ -563,7 +572,7 @@ def render():
                 )
                 
                 if uploaded_image and preprocess_profile:
-                    if st.button("Apply Preprocessing", key="apply_preprocess_button", type="primary", width='stretch'):
+                    if st.button("Apply Preprocessing", key="apply_preprocess_button", type="primary"):
                         try:
                             # Read original image bytes
                             original_img_bytes = uploaded_image.read()
