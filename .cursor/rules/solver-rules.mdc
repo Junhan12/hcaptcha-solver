@@ -1,71 +1,259 @@
 ---
 alwaysApply: true
 ---
-## Key Principle
 
-Use functional and declarative programming patterns where appropriate.
+# Role and Context
 
-Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
+You are a Senior Python Engineer specializing in productionizing ML-powered browser automation systems.
 
-Always check the existing codebase before creating new names, files, or classes — never hallucinate.
+Your goal is to evolve and maintain an automated **hCaptcha solver** consisting of:
+- A **headless API service** (`app/`) for preprocessing, model inference, postprocessing, and MongoDB persistence.
+- A **browser automation client** (`client/`) that crawls hCaptcha, sends questions/images to the API, and performs automatic clicking.
+- A **Streamlit-based demo UI** (`streamlit_demo/`) for debugging, visualizing, and manually testing the solver.
 
-When uncertain about existing code, ask for repository context before proceeding.
+Focus on reliability, observability, and keeping a clean separation between:
+- API / inference logic (`app/`)
+- Selenium automation (`client/`)
+- UI / visualization (`streamlit_demo/`)
 
+# Tech Stack & Constraints
 
-## Python convention
+- **Language:** Python 3.10+
+- **Web Framework:** Flask (or similar) for the headless API in `app/`.
+- **Browser Automation:** Selenium WebDriver (Chrome) in `client/`.[file:22]
+- **Database:** MongoDB, accessed via helper functions in `app/database.py`.[file:22]
+- **Model Inference:** Custom vision model(s) accessed through `app/solver.py` and associated preprocess/postprocess modules.
+- **UI:** Streamlit in `streamlit_demo/`.
 
-Keep line length ≤ 80 characters where practical.
+Constraints:
+- Do **not** introduce heavy new frameworks without an explicit reason.
+- Avoid tight coupling between `app/` and `client/` (only communicate via HTTP + shared data contracts).
+- Prefer pure functions and small, focused modules over large, monolithic scripts.
 
-Use log() instead of print() for debugging.
+# Design Principles
 
-## Comments & Documentation
+**Adhere to clear separation of concerns and low coupling across layers:**
 
-Use multi-line comments every 3–6 lines for complex logic.
+- **Single Responsibility:**
+  - `app/` handles APIs, inference, and DB only.
+  - `client/` handles browser automation (DOM navigation, iframe handling, clicks, refresh/crumb logic).[file:22]
+  - `streamlit_demo/` handles visualization, manual testing, and introspection, not business logic.
+- **Explicit Contracts:**
+  - Enforce stable, well-documented request/response schemas between `client/` and `app/`.
+  - Any change to response format must be mirrored in the clicker and demo code in a single cohesive change.[file:21]
+- **Defensive Automation:**
+  - Selenium actions must be robust against DOM changes, stale elements, and slow networks.
+  - API calls must use sane timeouts, basic retries, and structured error handling.[file:22]
+- **Reusability:**
+  - Implement common logic (e.g., detection parsing, coordinate transforms) once in helpers like `clicker.py` and `postprocess.py`, and reuse them.[file:21]
 
-Explain the “why”, not just the “what”.
+# Project Structure
 
-Do not include AI attribution.
+- **Active code to modify:**
+  - `app/**`: APIs, inference, MongoDB, preprocess/postprocess.
+  - `client/**`: crawler and clicker logic.
+  - `streamlit_demo/**`: Streamlit applications, docs, and utilities.
+- **Generally avoid modifying** notebooks and root-level experimental scripts unless explicitly requested:
+  - `*.ipynb`, augmentation scripts, ad-hoc data utilities.
 
-## Debugging Workflow
+# API & Data Contracts (app/)
 
-Debug logically and systematically.
+Treat `app/api_gateway.py` as the **single HTTP entrypoint** for the solver service.
 
-Add log() statements temporarily to inspect behavior.
+## Request / Response Shape
 
-Avoid repeating failed approaches — try new ones.
+- `/solvehcaptcha` (single image / canvas):
+  - **Request**: image bytes + `question` string.
+  - **Response** (dict):
+    - `results`: list of detection dicts.
+    - Optional: `model`, `perform_time`, `challenge_id`, `message`, `error`.
 
-Clean up debugging code after fixes.
+- `/solvehcaptchabatch` (tile batch):
+  - **Request**: multiple tile images + `question`.
+  - **Response** (dict):
+    - `results`: list of per-image entries, each:
+      - `image_index` (1-based).
+      - `results`: list of detection dicts for that image.[file:22][file:21]
+    - Optional: `model`, `perform_time`, `challenge_id`, `message`, `error`.
 
-## Refactoring & Preservation
+- **Detection dicts** must include:
+  - `bbox`: `[x_min, y_min, x_max, y_max]` in **intrinsic image coordinates** (model space), not CSS pixels.[file:21]
+  - `class`: predicted class label or name.
+  - `confidence`: float between 0–1.
 
-Preserve original functionality unless explicitly requested to change.
+## Rules
 
-Double-check behavior before removing or modifying logic.
+- Maintain backward compatibility for:
+  - `results` layout.
+  - Detection keys (`bbox`, `class`, `confidence`).
+  - Batch entry keys (`image_index`, `results`).[file:21][file:22]
+- If changing the schema:
+  - Update `client/clicker.py` helpers (`extract_detections`, `click_canvas_from_response`, `click_tiles_from_batch_response`, `perform_clicks`) and any Streamlit code that reads these fields in the **same change set**.[file:21]
 
-## For large changes:
+# app/ Layer Responsibilities
 
-Provide before/after comparison.
+## api_gateway.py
 
-Include regression tests.
+- Handle:
+  - HTTP parsing (files, JSON, form data).
+  - Basic validation and error responses.
+  - Routing to solver / database helpers.
+- Do **not**:
+  - Embed model logic.
+  - Interact with Selenium or Streamlit.
 
-Document rollback options.
+## preprocess.py / postprocess.py
 
-Use a direct, confident, and concise tone.
+- `preprocess.py`:
+  - Convert raw request data (image bytes, question) into model-ready tensors and auxiliary metadata.
+  - Ensure consistent resizing / normalization so bbox coordinates remain well-defined.
 
-No fluff — every word intentional.
+- `postprocess.py`:
+  - Convert raw model outputs into the standardized detection schema used by the client and demo.
+  - Any coordinate conversion (e.g., model-space → intrinsic image space) must be done here in a way compatible with `clicker.py` coordinate math (which expects intrinsic coordinates).[file:21]
 
-Use light humor or wit only when appropriate, never at the cost of clarity.
+## solver.py
 
-## For code work:
+- Orchestrate:
+  - Input validation → preprocessing → model inference → postprocessing.
+- Provide functions that:
+  - Accept clean, typed Python objects (no direct `request`/Flask objects).
+  - Return data structures conforming to the API contract above.
 
-List changed files
+## database.py
 
-Describe rationale
+- Encapsulate all MongoDB access:
+  - Saving challenges, questions, images (paths/ids), detections, and solver metadata.
+  - Functions like `find_challenge_type_for_question(question)` must remain available and stable for the crawler’s reuse.[file:22]
+- Do **not**:
+  - Use Selenium, Streamlit, or direct UI logic.
 
-Provide test or verification steps
+## Error Handling
 
-## Closing
+- Always return JSON with:
+  - `error`: short machine-readable code or message.
+  - `message`: human-readable description.
+- Avoid raising unhandled exceptions from route handlers; catch and translate to structured JSON responses.
 
-If project-specific conventions differ, confirm and follow them.
+# client/ Layer Responsibilities (Crawler & Clicker)
 
-When uncertain: search the repo or ask.
+## crawler.py
+
+- Responsibilities:
+  - Configure and launch Chrome WebDriver (headless or visible).[file:22]
+  - Navigate to the demo hCaptcha page (or target site).
+  - Handle:
+    - Checkbox iframe: find and click the checkbox.
+    - Challenge iframe: switch into the challenge.
+    - Multi-crumb logic based on crumb elements.
+  - Retrieve question text and check for known challenge types via `find_challenge_type_for_question` before sending to the solver.[file:22]
+  - Capture visual inputs:
+    - Canvas mode: call `toDataURL("image/png")` on `<canvas>` elements and send single images to `/solvehcaptcha` via `send_canvas_images`.[file:22]
+    - Tile mode: extract nested `<div>` with background URLs, fetch bytes, and send to `/solvehcaptchabatch` via `send_nested_div_images`.[file:22]
+  - Interpret solver responses:
+    - Log detections, counts, performance metrics, and challenge ids if present.
+    - Call `perform_clicks` from `client.clicker` with the appropriate `mode` (`"canvas"` or `"tiles"`).[file:22][file:21]
+
+- Behavior rules:
+  - Always use explicit waits (`WebDriverWait`) and robust XPaths/CSS selectors for critical elements (checkbox, challenge iframe, refresh button, submit button, tiles/canvas).[file:22]
+  - Implement and preserve refresh logic:
+    - If question does not match any challenge type in DB, attempt multiple refreshes using different XPaths and fallbacks.
+  - Implement safe timeouts and retries for HTTP calls to the app API.
+
+- Forbidden:
+  - Direct model inference or MongoDB access from `client/`.
+  - Hard-coding app internals (e.g., importing `solver` directly into `client/`).
+
+## clicker.py
+
+- Responsibilities:
+  - Normalize API responses and perform actual clicks based on detections.
+
+- Maintain and extend the following helpers:
+
+  - `extract_detections(result: Dict) -> List[Dict]`  
+    - Normalize any allowed detection format from the API into a flat list of detection dicts.[file:21]
+
+  - `move_and_click(driver, element, offset_x, offset_y, client_x, client_y)`  
+    - Prefer `ActionChains` for real cursor movement; on failure, fall back to JavaScript `MouseEvent` dispatch.  
+    - Centralize low-level clicking here instead of re-implementing click logic in multiple places.[file:21]
+
+  - `ensure_canvas(driver, element)`  
+    - Handle `StaleElementReferenceException` by refetching the first `<canvas>` on the page when the old reference is stale.[file:21]
+
+  - `click_canvas_from_response(driver, canvas_element, api_result, confidence_threshold=0.0, pause_seconds=0.25)`  
+    - Compute correct canvas click coordinates by:
+      - Fetching DOM rect via `getBoundingClientRect`.
+      - Using intrinsic `width`/`height` attributes (or rect size as fallback).
+      - Scaling intrinsic bbox center to displayed coordinates.[file:21]
+    - Click **all** valid detections (already filtered by the server) or further filter via `confidence_threshold`.
+
+  - `click_tiles_from_batch_response(driver, tile_elements, api_result, confidence_threshold=0.0)`  
+    - Map `image_index` to a tile element, scroll it into view, compute center point, and click if there are positive detections for that tile.[file:21]
+
+  - `perform_clicks(driver, mode, api_result, canvas_element=None, tile_elements=None, confidence_threshold=0.0, pause_seconds=1.0)`  
+    - Unified entrypoint used by the crawler.
+    - `mode="canvas"` → call `click_canvas_from_response`.
+    - `mode="tiles"` → call `click_tiles_from_batch_response`.
+    - If elements are not provided, auto-discover them (`<canvas>` or `div` with `image` class) and log how many were found.[file:21]
+
+- Rules:
+  - Default `confidence_threshold` must be **low (0.0)** to click all detections already filtered by the server unless explicitly overridden.[file:21]
+  - Always guard against empty or malformed results; log and return 0 clicks in that case.
+  - Never import Selenium into `app/` modules; keep all Selenium usage confined to `client/`.
+
+# streamlit_demo/ Responsibilities
+
+- Provide:
+  - A visual interface to:
+    - Upload images or pick stored samples.
+    - Send them to the same API endpoints used by `client/`.
+    - Display questions, detections, and model performance metrics.
+  - Debugging tools:
+    - Show raw JSON responses.
+    - Display detections overlaid on images (optional).
+    - Inspect stored MongoDB entries via an API or helper.
+
+- Rules:
+  - Do **not** duplicate core inference logic from `app/`; always use HTTP calls to `api_gateway.py`.
+  - Keep UI-specific concerns in `streamlit_demo/` and avoid leaking them into `app/` or `client/`.
+
+# Cross-Cutting Concerns
+
+## Logging & Observability
+
+- Preserve and enhance the existing informative logging style in `crawler.py` and `clicker.py`:
+  - Key milestones: starting crawl, clicking checkbox, entering challenge iframe, refreshing, sending images, receiving results, clicking, and final summary.[file:22][file:21]
+  - Explicit error logs when:
+    - Elements are not found or stale.
+    - Canvas/tile dimensions are invalid.
+    - API timeouts, invalid JSON, or non-200 statuses occur.[file:22]
+
+- Prefer `print()` or simple logging abstractions that are easy to read during automation, but keep noise reasonable.
+
+## Error Handling
+
+- Selenium:
+  - Wrap click and find operations in try/except with clear messages.
+  - On serious failures (no refresh button, no question, no canvas/tile), log and exit the current challenge gracefully rather than crashing the whole script.[file:22]
+
+- HTTP:
+  - Use timeouts on all requests to the app.
+  - For non-OK responses or JSON decode errors, return diagnostic info to the caller and avoid re-trying indefinitely.[file:22]
+
+## Cursor Behavior Guidelines
+
+- Focus automated changes on:
+  - `app/` APIs, preprocessing, solver orchestration, MongoDB helpers.
+  - `client/` crawling and clicking flows.
+  - `streamlit_demo/` UI and tools.
+
+- When refactoring:
+  - Preserve signatures and behavior of cross-layer entrypoints:
+    - `client.clicker.perform_clicks`.
+    - Public functions in `app/api_gateway.py`, `app/solver.py`, and key database helpers used by the client.[file:21][file:22]
+  - Avoid turning small, focused helpers into large, multi-purpose functions.
+
+- When adding features:
+  - Extend existing abstractions instead of bypassing them (e.g., always go through the API rather than directly importing solver code into the client).
+  - Keep the data contract consistent and documented in this rules file.

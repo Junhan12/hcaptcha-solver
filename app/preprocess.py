@@ -220,7 +220,7 @@ def apply_grayscale(img, params):
         
         # BGR (3 channels)
         elif num_channels == 3:
-        return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
         # RGBA (4 channels) - handle if needed
         # Note: OpenCV uses BGR by default, but if image is RGBA, 
@@ -503,7 +503,7 @@ def apply_preprocess(img_bytes, preprocess_profile):
                 if operation_name == "resize":
                     img, resize_info = operation_func(img, params)
                 else:
-                img = operation_func(img, params)
+                    img = operation_func(img, params)
                 
                 applied.append({"operation": operation_name, "params": params})
             except Exception as e:

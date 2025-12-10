@@ -147,7 +147,7 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
             iou_threshold = postprocess_profile.get('iou_threshold', iou_threshold)
    
     try:
-       
+        
         # Get model_id from config
         model_id = config.get('model_id')
         if not model_id:
@@ -243,21 +243,21 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
                 background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
                 img = background
             img_array = np.array(img)
-            
-            # Ensure image has 3 channels (RGB) for YOLO
-            if len(img_array.shape) == 2:
-                # Grayscale image (H, W) -> convert to RGB (H, W, 3)
-                img_array = np.stack([img_array] * 3, axis=-1)
-            elif len(img_array.shape) == 3 and img_array.shape[2] == 1:
-                # Grayscale with channel dimension (H, W, 1) -> convert to RGB (H, W, 3)
-                img_array = np.repeat(img_array, 3, axis=2)
-            elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
-                # RGBA image -> convert to RGB
-                # Create white background and composite
-                rgb_array = img_array[:, :, :3]
-                alpha = img_array[:, :, 3:4] / 255.0
-                white_bg = np.ones_like(rgb_array) * 255
-                img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+        
+        # Ensure image has 3 channels (RGB) for YOLO
+        if len(img_array.shape) == 2:
+            # Grayscale image (H, W) -> convert to RGB (H, W, 3)
+            img_array = np.stack([img_array] * 3, axis=-1)
+        elif len(img_array.shape) == 3 and img_array.shape[2] == 1:
+            # Grayscale with channel dimension (H, W, 1) -> convert to RGB (H, W, 3)
+            img_array = np.repeat(img_array, 3, axis=2)
+        elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
+            # RGBA image -> convert to RGB
+            # Create white background and composite
+            rgb_array = img_array[:, :, :3]
+            alpha = img_array[:, :, 3:4] / 255.0
+            white_bg = np.ones_like(rgb_array) * 255
+            img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
             
             image_source = img_array
         else:
