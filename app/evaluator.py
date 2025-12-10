@@ -86,7 +86,7 @@ def yolo_to_xyxy(yolo_bbox: List[float], img_width: int, img_height: int) -> Lis
 def match_predictions_to_ground_truth(
     predictions: List[Dict],
     ground_truth: List[Dict],
-    iou_threshold: float = 0.5,
+    iou_threshold: float = 0.45,
     class_mapping: Optional[Dict[str, str]] = None
 ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
     """
@@ -211,7 +211,7 @@ def calculate_ap(
     false_positives: List[Dict],
     false_negatives: List[Dict],
     class_name: str,
-    iou_threshold: float = 0.5
+    iou_threshold: float = 0.45
 ) -> float:
     """
     Calculate Average Precision (AP) for a specific class at a given IoU threshold.

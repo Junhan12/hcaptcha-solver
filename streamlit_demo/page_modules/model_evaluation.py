@@ -78,48 +78,6 @@ def render():
 
             st.markdown("---")
 
-            # Dataset upload section
-            st.markdown("### Upload Dataset (Roboflow Format)")
-            with st.expander("📋 Dataset Format Instructions"):
-                st.markdown("""
-                **Roboflow Dataset Format:**
-
-                Upload a `data.yaml` file from a Roboflow dataset. The file should contain:
-
-                ```yaml
-                path: ../datasets/dataset_name
-                train: images/train
-                val: images/val
-                test: images/test
-                names:
-                  0: class1
-                  1: class2
-                  2: class3
-                nc: 3
-                ```
-
-                **Directory Structure:**
-                ```
-                dataset/
-                ├── data.yaml
-                ├── train/
-                │   ├── images/
-                │   └── labels/
-                ├── val/
-                │   ├── images/
-                │   └── labels/
-                └── test/
-                    ├── images/
-                    └── labels/
-                ```
-
-                **Note:** 
-                - The validation dataset will be used for evaluation
-                - Images should be in `val/images/` directory
-                - Annotations should be in YOLO format in `val/labels/` directory
-                - Annotation files should have the same name as images but with `.txt` extension
-                """)
-
             st.info("Upload the data.yaml file from your Roboflow dataset. The validation split will be used for evaluation.")
 
             data_yaml_file = st.file_uploader(
@@ -145,7 +103,7 @@ def render():
 
                                 # Load validation dataset
                                 st.info("Loading validation dataset from data.yaml...")
-                                st.caption("⚠️ Note: The evaluation process is READ-ONLY. Your original dataset files will NOT be modified.")
+                                st.caption("Note: The evaluation process is READ-ONLY. Your original dataset files will NOT be modified.")
                                 image_files, all_annotations, class_names = load_validation_dataset(data_yaml_path)
 
                                 if not image_files:
@@ -162,7 +120,7 @@ def render():
 
                                     # Show ground truth class names from data.yaml
                                     if class_names:
-                                        st.caption(f"📋 Ground truth classes from data.yaml: {sorted([class_names[i] for i in sorted(class_names.keys())])}")
+                                        st.caption(f"Ground truth classes from data.yaml: {sorted([class_names[i] for i in sorted(class_names.keys())])}")
 
                                     # Prepare model config for direct inference (bypassing API validation)
                                     model_config = {
@@ -241,7 +199,7 @@ def render():
                                         pred_classes = set([p.get('class', '') for p in all_predictions if isinstance(p, dict)])
                                         gt_classes = set([g.get('class', '') for g in ground_truth if isinstance(g, dict)])
 
-                                        with st.expander("🔍 Debug: Class Name Comparison"):
+                                        with st.expander("Debug: Class Name Comparison"):
                                             st.write("**Prediction Classes:**", sorted(pred_classes))
                                             st.write("**Ground Truth Classes:**", sorted(gt_classes))
                                             st.write("**Matching Classes:**", sorted(pred_classes & gt_classes))
@@ -252,7 +210,7 @@ def render():
                                         # This handles cases where model uses different class names than ground truth
                                         class_mapping = {}
                                         if pred_classes != gt_classes:
-                                            st.warning("⚠️ Class name mismatch detected! Attempting automatic mapping...")
+                                            st.warning("Class name mismatch detected! Attempting automatic mapping...")
                                             # Try to match by similarity (case-insensitive, underscore/space normalization)
                                             for pred_class in pred_classes:
                                                 pred_normalized = pred_class.lower().replace('_', ' ').replace('-', ' ')
@@ -263,9 +221,9 @@ def render():
                                                         break
 
                                             if class_mapping:
-                                                st.info(f"✅ Created class mapping: {class_mapping}")
+                                                st.info(f"Created class mapping: {class_mapping}")
                                             else:
-                                                st.error("❌ Could not automatically map class names. Please ensure model and dataset use the same class names.")
+                                                st.error("Could not automatically map class names. Please ensure model and dataset use the same class names.")
 
                                         # Run evaluation with class mapping
                                         eval_results = evaluate_model(
@@ -334,11 +292,11 @@ def render():
                                                 is_active=selected_model.get('is_active', False)  # Preserve is_active status
                                             )
                                             if updated_model:
-                                                st.success("✅ Evaluation results saved to database!")
+                                                st.success("Evaluation results saved to database!")
                                             else:
-                                                st.warning("⚠️ Could not save evaluation results to database. Please check database connection.")
+                                                st.warning("Could not save evaluation results to database. Please check database connection.")
                                         except Exception as e:
-                                            st.error(f"❌ Error saving evaluation results: {e}")
+                                            st.error(f"Error saving evaluation results: {e}")
                                             import traceback
                                             st.code(traceback.format_exc())
 
