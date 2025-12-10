@@ -194,26 +194,15 @@ def render():
                                         progress_bar.progress((idx + 1) / len(image_files))
 
                                         try:
-                                            # Read image file
-                                            with open(img_path, 'rb') as f:
-                                                img_bytes = f.read()
-
-                                            # Apply preprocessing if model has preprocess profile
-                                            processed_img_bytes = img_bytes
-                                            if preprocess_profile:
-                                                try:
-                                                    processed_img_bytes, _, _ = apply_preprocess(img_bytes, preprocess_profile)
-                                                except Exception as e:
-                                                    st.warning(f"Preprocessing failed for {os.path.basename(img_path)}: {e}")
-                                                    processed_img_bytes = img_bytes
-
-                                            # Run inference directly using solve_captcha (bypasses question/challenge_type validation)
-                                            # Pass empty question since we're bypassing validation
+                                            # Use native YOLOv8 evaluation mode to match training evaluation exactly
+                                            # This skips preprocessing and uses file paths directly, matching YOLOv8's native behavior
                                             inference_result = solve_captcha(
-                                                processed_img_bytes,
+                                                img_path,  # Pass file path directly for native evaluation
                                                 question="",  # Empty question - bypasses validation
                                                 config=model_config,
-                                                postprocess_profile=postprocess_profile
+                                                postprocess_profile=None,  # Skip postprocessing for native evaluation
+                                                use_native_eval=True,  # Enable native evaluation mode
+                                                imgsz=None  # Use model's default image size (matches training)
                                             )
 
                                             # Handle inference result
@@ -408,7 +397,9 @@ def render():
                                                     xaxis_title='Class',
                                                     yaxis_title='Score',
                                                     barmode='group',
-                                                    height=400
+                                                    height=400,
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(fig_prf, width='stretch')
 
@@ -424,7 +415,9 @@ def render():
                                                     title='Per-Class AP@0.5',
                                                     xaxis_title='Class',
                                                     yaxis_title='AP@0.5',
-                                                    height=400
+                                                    height=400,
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(fig_ap, width='stretch')
 
@@ -456,7 +449,9 @@ def render():
                                                     xaxis_title='Class',
                                                     yaxis_title='Count',
                                                     barmode='group',
-                                                    height=400
+                                                    height=400,
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(fig_counts, width='stretch')
 
@@ -474,7 +469,9 @@ def render():
                                                     title='Overall mAP Metrics',
                                                     xaxis_title='Metric',
                                                     yaxis_title='Score',
-                                                    height=400
+                                                    height=400,
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(summary_fig, width='stretch')
                                                 
@@ -584,7 +581,9 @@ def render():
                                                     xaxis=dict(range=[0, 1]),
                                                     yaxis=dict(range=[0, 1]),
                                                     height=500,
-                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01),
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(pr_fig, width='stretch')
                                                 
@@ -658,7 +657,9 @@ def render():
                                                     xaxis=dict(range=[0, 1]),
                                                     yaxis=dict(range=[0, 1]),
                                                     height=500,
-                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01),
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(f1_fig, width='stretch')
                                                 
@@ -720,7 +721,9 @@ def render():
                                                     xaxis=dict(range=[0, 1]),
                                                     yaxis=dict(range=[0, 1]),
                                                     height=500,
-                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01),
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(recall_fig, width='stretch')
                                                 
@@ -787,7 +790,9 @@ def render():
                                                     xaxis=dict(range=[0, 1]),
                                                     yaxis=dict(range=[0, 1]),
                                                     height=500,
-                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01)
+                                                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=1.01),
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(prec_fig, width='stretch')
                                                 
@@ -848,7 +853,9 @@ def render():
                                                     xaxis_title='True',
                                                     yaxis_title='Predicted',
                                                     height=600,
-                                                    width=800
+                                                    width=800,
+                                                    plot_bgcolor='rgba(255, 255, 255, 0.1)',
+                                                    paper_bgcolor='rgba(0, 0, 0, 0)'
                                                 )
                                                 st.plotly_chart(cm_fig, width='stretch')
                                             

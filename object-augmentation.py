@@ -1,123 +1,232 @@
+import os
+import glob
+import shutil
+
 import cv2
 import albumentations as A
-import os
-import shutil
-from pathlib import Path
-from tqdm import tqdm
-# =========================
-# USER CONFIGURATION
-# =========================
-DATASET_ROOT = Path(r"C:\Users\junha\Downloads\object-dataset\train")
-OUTPUT_ROOT = Path(r"C:\Users\junha\Downloads\object-dataset\train")
+import numpy as np
 
-# =========================
-# HELPER FUNCTIONS
-# =========================
-def read_yolo_label(label_path):
-    bboxes = []
-    class_ids = []
-    if not label_path.exists():
-        return [], []
-    with open(label_path, 'r') as f:
-        for line in f:
+
+# ============ TRANSFORMS ============
+
+# 1) Rotation only: -15 to +15 degrees
+rotate_transform = A.Compose(
+    [
+        A.Rotate(limit=(-15, 15), p=1.0),
+    ],
+    bbox_params=A.BboxParams(
+        format="yolo",
+        label_fields=["class_labels"],
+        clip=True,          # try to clip internally
+    ),
+)
+
+# 2) Brightness only: about ±15% change
+brightness_transform = A.Compose(
+    [
+        A.RandomBrightnessContrast(
+            brightness_limit=0.15,  # ~ -15% to +15% brightness
+            contrast_limit=0.0,     # no contrast change here
+            p=1.0,
+        )
+    ],
+    bbox_params=A.BboxParams(
+        format="yolo",
+        label_fields=["class_labels"],
+        clip=True,
+    ),
+)
+
+# 3) Contrast only: about ±10% change
+contrast_transform = A.Compose(
+    [
+        A.RandomBrightnessContrast(
+            brightness_limit=0.0,   # no brightness change here
+            contrast_limit=0.10,    # ~ -10% to +10% contrast
+            p=1.0,
+        )
+    ],
+    bbox_params=A.BboxParams(
+        format="yolo",
+        label_fields=["class_labels"],
+        clip=True,
+    ),
+)
+
+
+# ============ HELPERS ============
+
+def clip_yolo_box(box, eps=1e-6):
+    """
+    Clip a YOLO bbox [xc, yc, w, h] to [0,1] range with a tiny epsilon
+    to avoid strict Albumentations checks failing on -1e-7, 1+1e-7, etc.
+    """
+    xc, yc, w, h = box
+    xc = min(max(xc, 0.0), 1.0)
+    yc = min(max(yc, 0.0), 1.0)
+    w = min(max(w, 0.0), 1.0)
+    h = min(max(h, 0.0), 1.0)
+
+    # Push extremely small negatives to 0 and extremely small >1 to 1
+    if xc < 0.0:
+        xc = 0.0
+    if yc < 0.0:
+        yc = 0.0
+    if w < 0.0:
+        w = 0.0
+    if h < 0.0:
+        h = 0.0
+
+    if xc > 1.0:
+        xc = 1.0
+    if yc > 1.0:
+        yc = 1.0
+    if w > 1.0:
+        w = 1.0
+    if h > 1.0:
+        h = 1.0
+
+    # Optional: ensure width/height are not exactly zero if box exists
+    return [xc, yc, w, h]
+
+
+def save_augmented(image, bboxes, class_labels,
+                   transform, base_name, aug_suffix,
+                   save_images_dir, save_labels_dir):
+    """
+    Apply a single transform and save image + labels if any bbox remains.
+    Also clips YOLO boxes to [0,1] to avoid float precision errors.
+    """
+    transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
+    out_img = transformed["image"]
+    out_boxes = transformed["bboxes"]
+    out_labels = transformed["class_labels"]
+
+    if len(out_boxes) == 0:
+        # All boxes disappeared or were filtered
+        return
+
+    # Clip boxes to [0,1]
+    clipped_boxes = [clip_yolo_box(b) for b in out_boxes]
+    out_boxes = clipped_boxes
+
+    out_img_name = f"{base_name}_{aug_suffix}.jpg"
+    out_label_name = f"{base_name}_{aug_suffix}.txt"
+
+    cv2.imwrite(os.path.join(save_images_dir, out_img_name), out_img)
+    with open(os.path.join(save_labels_dir, out_label_name), "w") as f:
+        for l, b in zip(out_labels, out_boxes):
+            cls_id = l
+            xc, yc, bw, bh = b
+            f.write(f"{cls_id} {xc} {yc} {bw} {bh}\n")
+
+
+# ============ MAIN AUGMENTATION ============
+
+def augment_and_save(images_dir, labels_dir, save_images_dir, save_labels_dir, n_aug=3):
+    """
+    For each image:
+      1. Save original
+      2. If n_aug >= 1: rotation-only augmentation
+      3. If n_aug >= 2: brightness-only augmentation
+      4. If n_aug >= 3: contrast-only augmentation
+    """
+    os.makedirs(save_images_dir, exist_ok=True)
+    os.makedirs(save_labels_dir, exist_ok=True)
+
+    image_files = sorted(glob.glob(os.path.join(images_dir, "*.jpg")))
+    print(f"Found {len(image_files)} images in {images_dir}")
+
+    for img_path in image_files:
+        filename = os.path.basename(img_path)
+        label_path = os.path.join(labels_dir, filename.replace(".jpg", ".txt"))
+
+        # Read image
+        image = cv2.imread(img_path)
+        if image is None:
+            print(f"Warning: cannot read image {img_path}, skipping.")
+            continue
+
+        if not os.path.exists(label_path):
+            print(f"Warning: label file not found for {filename}, skipping.")
+            continue
+
+        # Read labels in YOLO format: cls xc yc w h (all normalized)
+        with open(label_path, "r") as f:
+            lines = f.read().splitlines()
+
+        if len(lines) == 0:
+            print(f"Warning: no boxes in {label_path}, skipping.")
+            continue
+
+        bboxes, class_labels = [], []
+        for line in lines:
             parts = line.strip().split()
-            if len(parts) >= 5:
-                class_ids.append(int(parts[0]))
-                bboxes.append([float(x) for x in parts[1:5]])
-    return bboxes, class_ids
+            if len(parts) != 5:
+                print(f"Warning: bad label line '{line}' in {label_path}, skipping line.")
+                continue
+            cls, xc, yc, bw, bh = map(float, parts)
+            # Clip any slightly out-of-range original boxes as well
+            xc, yc, bw, bh = clip_yolo_box([xc, yc, bw, bh])
+            bboxes.append([xc, yc, bw, bh])
+            class_labels.append(int(cls))
 
-def save_yolo_label(save_path, bboxes, class_ids):
-    with open(save_path, 'w') as f:
-        for bbox, cls_id in zip(bboxes, class_ids):
-            # Safety Clip: Ensure YOLO format is strictly 0.0-1.0
-            x_c, y_c, w, h = [max(0.0, min(1.0, val)) for val in bbox]
-            f.write(f"{cls_id} {x_c:.6f} {y_c:.6f} {w:.6f} {h:.6f}\n")
+        # Save original image and label
+        shutil.copy(img_path, os.path.join(save_images_dir, filename))
+        shutil.copy(label_path, os.path.join(save_labels_dir, filename.replace(".jpg", ".txt")))
 
-# =========================
-# MAIN LOGIC
-# =========================
-def process_augmentation():
-    # 1. Define Directories
-    src_img_dir = DATASET_ROOT / "images"
-    src_lbl_dir = DATASET_ROOT / "labels"
-    out_img_dir = OUTPUT_ROOT / "aug_images"
-    out_lbl_dir = OUTPUT_ROOT / "aug_labels"
+        base_name = filename[:-4]  # remove .jpg
 
-    # 2. Create Output Folders
-    out_img_dir.mkdir(parents=True, exist_ok=True)
-    out_lbl_dir.mkdir(parents=True, exist_ok=True)
+        # Aug 1: rotation
+        if n_aug >= 1:
+            save_augmented(
+                image=image,
+                bboxes=bboxes,
+                class_labels=class_labels,
+                transform=rotate_transform,
+                base_name=base_name,
+                aug_suffix="aug1_rot",
+                save_images_dir=save_images_dir,
+                save_labels_dir=save_labels_dir,
+            )
 
-    # 3. Define the 3 DISTINCT transformations (p=1.0 means ALWAYS apply)
-    # We create a list of single operations.
-    aug_operations = [
-        # Augmentation 1: Rotation Only
-        A.Compose([
-            A.Rotate(limit=15, border_mode=cv2.BORDER_CONSTANT, value=0, p=1.0)
-        ], bbox_params=A.BboxParams(format='yolo', min_visibility=0.1, label_fields=['class_ids'])),
+        # Aug 2: brightness
+        if n_aug >= 2:
+            save_augmented(
+                image=image,
+                bboxes=bboxes,
+                class_labels=class_labels,
+                transform=brightness_transform,
+                base_name=base_name,
+                aug_suffix="aug2_bright",
+                save_images_dir=save_images_dir,
+                save_labels_dir=save_labels_dir,
+            )
 
-        # Augmentation 2: Brightness Only
-        A.Compose([
-            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0, p=1.0)
-        ], bbox_params=A.BboxParams(format='yolo', min_visibility=0.1, label_fields=['class_ids'])),
+        # Aug 3: contrast
+        if n_aug >= 3:
+            save_augmented(
+                image=image,
+                bboxes=bboxes,
+                class_labels=class_labels,
+                transform=contrast_transform,
+                base_name=base_name,
+                aug_suffix="aug3_contrast",
+                save_images_dir=save_images_dir,
+                save_labels_dir=save_labels_dir,
+            )
 
-        # Augmentation 3: Contrast/Exposure Only
-        A.Compose([
-            A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=0.2, p=1.0)
-        ], bbox_params=A.BboxParams(format='yolo', min_visibility=0.1, label_fields=['class_ids']))
-    ]
+    print("Augmentation completed.")
 
-    # 4. Get Images
-    valid_ext = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-    image_files = [p for p in src_img_dir.iterdir() if p.suffix.lower() in valid_ext]
 
-    print(f"Found {len(image_files)} images.")
-    print("Generating: 1 Original + 3 Augmented versions (Rotation, Brightness, Contrast)")
-
-    count = 0
-
-    for img_path in tqdm(image_files):
-        stem = img_path.stem
-        
-        # Load Data
-        image = cv2.imread(str(img_path))
-        if image is None: continue
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        label_path = src_lbl_dir / f"{stem}.txt"
-        bboxes, class_ids = read_yolo_label(label_path)
-
-        # --- SAVE 1: ORIGINAL (Copy) ---
-        shutil.copy2(img_path, out_img_dir / img_path.name)
-        if label_path.exists():
-            shutil.copy2(label_path, out_lbl_dir / label_path.name)
-
-        # --- SAVE 2, 3, 4: AUGMENTATIONS ---
-        # We loop through our specific list of 3 operations
-        for i, pipeline in enumerate(aug_operations):
-            try:
-                # Apply the specific pipeline
-                augmented = pipeline(image=image, bboxes=bboxes, class_ids=class_ids)
-                
-                # Check if boxes still exist (Rotation might remove them)
-                if not augmented['bboxes'] and bboxes:
-                    # If rotation pushed object out of view, skip saving this specific version
-                    continue
-
-                # Save Image
-                suffix = f"_aug{i+1}" # _aug1, _aug2, _aug3
-                new_stem = f"{stem}{suffix}"
-                
-                aug_img_bgr = cv2.cvtColor(augmented['image'], cv2.COLOR_RGB2BGR)
-                cv2.imwrite(str(out_img_dir / f"{new_stem}{img_path.suffix}"), aug_img_bgr)
-
-                # Save Label
-                save_yolo_label(out_lbl_dir / f"{new_stem}.txt", augmented['bboxes'], augmented['class_ids'])
-                
-                count += 1
-            except Exception as e:
-                print(f"[WARN] Error on {stem} aug {i+1}: {e}")
-
-    print(f"\n[DONE] Saved {count} augmented images to: {OUTPUT_ROOT}")
+# ============ ENTRY POINT ============
 
 if __name__ == "__main__":
-    process_augmentation()
+    # CHANGE these paths to your dataset locations
+    augment_and_save(
+        images_dir="C:/Users/junha/Downloads/cleaned_dataset/cleaned_dataset/images",
+        labels_dir="C:/Users/junha/Downloads/cleaned_dataset/cleaned_dataset/labels",
+        save_images_dir="C:/Users/junha/Downloads/cleaned_dataset/cleaned_dataset/aug_images",
+        save_labels_dir="C:/Users/junha/Downloads/cleaned_dataset/cleaned_dataset/aug_labels",
+        n_aug=3,  # 1: only rotation, 2: +brightness, 3: +contrast
+    )

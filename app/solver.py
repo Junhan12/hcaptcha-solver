@@ -104,15 +104,17 @@ def get_cache_info():
     }
 
 
-def solve_captcha(image, question, config, postprocess_profile=None):
+def solve_captcha(image, question, config, postprocess_profile=None, use_native_eval=False, imgsz=None):
     """
     Run YOLO model inference on image with optional postprocessing steps.
     
     Args:
-        image: Image bytes or image array
+        image: Image bytes, image array, or file path (str) if use_native_eval=True
         question: Question string for context
         config: Model configuration dict with 'model_id'
         postprocess_profile: Dict with 'steps' array (list of operations) or legacy dict with thresholds
+        use_native_eval: If True, use YOLOv8 native evaluation mode (skip preprocessing, use file paths directly)
+        imgsz: Image size for inference (int or tuple). If None, uses model default.
     
     Returns:
         List of detection results, each with 'class', 'confidence', 'bbox' [x1, y1, x2, y2]
@@ -123,8 +125,9 @@ def solve_captcha(image, question, config, postprocess_profile=None):
     
     # Extract postprocess thresholds for YOLO inference
     # Support both new format (steps array) and legacy format (direct thresholds dict)
-    conf_threshold = 0.7  # Default
-    iou_threshold = 0.5   # Default
+    # Default thresholds match YOLOv8's standard evaluation settings
+    conf_threshold = 0.25  # Default confidence threshold
+    iou_threshold = 0.45  # Default IoU threshold for NMS (matches YOLOv8 validation default)
     
     if postprocess_profile:
         # Check if it's the new format (with 'steps' array)
@@ -211,8 +214,25 @@ def solve_captcha(image, question, config, postprocess_profile=None):
         if model is None:
             return {'error': 'no model selected'}
         
-        # Convert image bytes to PIL Image or numpy array
-        if isinstance(image, bytes):
+        # Build predict parameters matching YOLOv8 validation defaults
+        predict_params = {
+            'conf': conf_threshold,  # Confidence threshold
+            'iou': iou_threshold,    # IoU threshold for NMS
+            'verbose': False,
+            'augment': False,        # No test-time augmentation for evaluation
+        }
+        
+        # Add imgsz if specified (should match training size for consistency)
+        if imgsz is not None:
+            predict_params['imgsz'] = imgsz
+        
+        # Handle image input based on evaluation mode
+        if use_native_eval and isinstance(image, str) and os.path.exists(image):
+            # Native evaluation mode: pass file path directly to YOLOv8
+            # This matches YOLOv8's native evaluation behavior exactly
+            image_source = image
+        elif isinstance(image, bytes):
+            # Image bytes - convert through PIL (for preprocessed images)
             img = Image.open(io.BytesIO(image))
             # Convert grayscale to RGB if needed
             if img.mode == 'L' or img.mode == 'LA' or img.mode == 'P':
@@ -223,32 +243,30 @@ def solve_captcha(image, question, config, postprocess_profile=None):
                 background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
                 img = background
             img_array = np.array(img)
+            
+            # Ensure image has 3 channels (RGB) for YOLO
+            if len(img_array.shape) == 2:
+                # Grayscale image (H, W) -> convert to RGB (H, W, 3)
+                img_array = np.stack([img_array] * 3, axis=-1)
+            elif len(img_array.shape) == 3 and img_array.shape[2] == 1:
+                # Grayscale with channel dimension (H, W, 1) -> convert to RGB (H, W, 3)
+                img_array = np.repeat(img_array, 3, axis=2)
+            elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
+                # RGBA image -> convert to RGB
+                # Create white background and composite
+                rgb_array = img_array[:, :, :3]
+                alpha = img_array[:, :, 3:4] / 255.0
+                white_bg = np.ones_like(rgb_array) * 255
+                img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+            
+            image_source = img_array
         else:
-            img_array = image
-        
-        # Ensure image has 3 channels (RGB) for YOLO
-        if len(img_array.shape) == 2:
-            # Grayscale image (H, W) -> convert to RGB (H, W, 3)
-            img_array = np.stack([img_array] * 3, axis=-1)
-        elif len(img_array.shape) == 3 and img_array.shape[2] == 1:
-            # Grayscale with channel dimension (H, W, 1) -> convert to RGB (H, W, 3)
-            img_array = np.repeat(img_array, 3, axis=2)
-        elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
-            # RGBA image -> convert to RGB
-            # Create white background and composite
-            rgb_array = img_array[:, :, :3]
-            alpha = img_array[:, :, 3:4] / 255.0
-            white_bg = np.ones_like(rgb_array) * 255
-            img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+            # Numpy array or other format
+            image_source = image
         
         # Run inference with confidence and IoU thresholds
         # YOLO's predict method applies confidence filtering and NMS automatically
-        results = model.predict(
-            img_array,
-            conf=conf_threshold,  # Confidence threshold
-            iou=iou_threshold,    # IoU threshold for NMS
-            verbose=False
-        )
+        results = model.predict(image_source, **predict_params)
         
         # Extract detections from YOLO results
         detections = []
@@ -276,8 +294,8 @@ def solve_captcha(image, question, config, postprocess_profile=None):
                         'bbox': [float(x1), float(y1), float(x2), float(y2)]
                     })
         
-        # Apply postprocessing steps if provided
-        if postprocess_profile:
+        # Apply postprocessing steps if provided (skip for native evaluation to match YOLOv8 exactly)
+        if postprocess_profile and not use_native_eval:
             try:
                 from .postprocess import apply_postprocess
             except ImportError:

@@ -660,13 +660,22 @@ def load_validation_dataset(data_yaml_path: str) -> Tuple[List[str], List[List[D
             labels_dir = val_dir
     
     # Get all image files
+    # Use a set to automatically deduplicate paths (handles case-insensitive filesystems)
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
-    image_files = []
-    for ext in image_extensions:
-        image_files.extend(Path(images_dir).glob(f'*{ext}'))
-        image_files.extend(Path(images_dir).glob(f'*{ext.upper()}'))
+    image_files_set = set()
     
-    image_files = sorted([str(f) for f in image_files])
+    for ext in image_extensions:
+        # Collect files with lowercase extension
+        for file_path in Path(images_dir).glob(f'*{ext}'):
+            # Use resolve() to normalize path (handles case-insensitive filesystems like Windows)
+            image_files_set.add(file_path.resolve())
+        
+        # Collect files with uppercase extension (for case-sensitive filesystems)
+        for file_path in Path(images_dir).glob(f'*{ext.upper()}'):
+            image_files_set.add(file_path.resolve())
+    
+    # Convert to sorted list of strings
+    image_files = sorted([str(f) for f in image_files_set])
     
     # Load annotations for each image
     all_annotations = []

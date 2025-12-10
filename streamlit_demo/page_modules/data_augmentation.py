@@ -55,6 +55,39 @@ def select_folder_dialog(title="Select Folder"):
         return None
 
 
+def clip_yolo_box(box, eps=1e-6):
+    """
+    Clip a YOLO bbox [xc, yc, w, h] to [0,1] range with a tiny epsilon
+    to avoid strict Albumentations checks failing on -1e-7, 1+1e-7, etc.
+    """
+    xc, yc, w, h = box
+    xc = min(max(xc, 0.0), 1.0)
+    yc = min(max(yc, 0.0), 1.0)
+    w = min(max(w, 0.0), 1.0)
+    h = min(max(h, 0.0), 1.0)
+
+    # Push extremely small negatives to 0 and extremely small >1 to 1
+    if xc < 0.0:
+        xc = 0.0
+    if yc < 0.0:
+        yc = 0.0
+    if w < 0.0:
+        w = 0.0
+    if h < 0.0:
+        h = 0.0
+
+    if xc > 1.0:
+        xc = 1.0
+    if yc > 1.0:
+        yc = 1.0
+    if w > 1.0:
+        w = 1.0
+    if h > 1.0:
+        h = 1.0
+
+    return [xc, yc, w, h]
+
+
 def augment_images(
     images_dir,
     labels_dir=None,
@@ -62,7 +95,8 @@ def augment_images(
     save_labels_dir=None,
     selected_augmentations=None,
     n_aug=3,
-    progress_callback=None
+    progress_callback=None,
+    mode='random'
 ):
     """
     Apply selected augmentations to images.
@@ -75,6 +109,8 @@ def augment_images(
         selected_augmentations: Dict with augmentation settings
         n_aug: Number of augmentations per image
         progress_callback: Optional callback function(processed, total, current_file)
+        mode: 'random' (all augmentations applied randomly to each image) or 
+              'sequential' (one augmentation type per augmented image)
     """
     if not CV2_AVAILABLE or not ALBUMENTATIONS_AVAILABLE:
         raise ImportError("OpenCV and albumentations are required for augmentation")
@@ -83,49 +119,136 @@ def augment_images(
     if save_labels_dir:
         os.makedirs(save_labels_dir, exist_ok=True)
     
-    # Build augmentation pipeline based on selections
-    transforms = []
+    has_labels_dir = labels_dir and os.path.exists(labels_dir)
     
-    if selected_augmentations.get('horizontal_flip', False):
-        p = selected_augmentations.get('horizontal_flip_p', 0.5)
-        transforms.append(A.HorizontalFlip(p=p))
+    # Initialize variables for both modes
+    sequential_transforms = []
+    transform_names = []
+    transform = None
     
-    if selected_augmentations.get('random_rotate90', False):
-        p = selected_augmentations.get('random_rotate90_p', 1.0)
-        transforms.append(A.RandomRotate90(p=p))
-    
-    if selected_augmentations.get('rotate', False):
-        limit = selected_augmentations.get('rotate_limit', 15)
-        p = selected_augmentations.get('rotate_p', 0.7)
-        transforms.append(A.Rotate(limit=limit, p=p))
-    
-    if selected_augmentations.get('brightness', False):
-        brightness_limit = selected_augmentations.get('brightness_limit', 0.2)
-        contrast_limit = selected_augmentations.get('contrast_limit', 0.0)
-        p = selected_augmentations.get('brightness_p', 0.7)
-        transforms.append(A.RandomBrightnessContrast(
-            brightness_limit=brightness_limit,
-            contrast_limit=contrast_limit,
-            p=p
-        ))
-    
-    if selected_augmentations.get('exposure', False):
-        gamma_limit = selected_augmentations.get('gamma_limit', (90, 110))
-        p = selected_augmentations.get('exposure_p', 0.7)
-        transforms.append(A.RandomGamma(gamma_limit=gamma_limit, p=p))
-    
-    if not transforms:
-        raise ValueError("No augmentations selected")
-    
-    # Create transform pipeline
-    # Include bbox_params only if labels directory is provided
-    if labels_dir and os.path.exists(labels_dir):
-        transform = A.Compose(
-            transforms,
-            bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'])
-        )
+    if mode == 'sequential':
+        # Sequential mode: build separate transforms for each augmentation type
+        # Order: horizontal_flip, random_rotate90, rotate, brightness, exposure
+        
+        if selected_augmentations.get('horizontal_flip', False):
+            p = selected_augmentations.get('horizontal_flip_p', 0.5)
+            if has_labels_dir:
+                seq_transform = A.Compose(
+                    [A.HorizontalFlip(p=1.0)],
+                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                )
+            else:
+                seq_transform = A.Compose([A.HorizontalFlip(p=1.0)])
+            sequential_transforms.append(seq_transform)
+            transform_names.append('horizontal_flip')
+        
+        if selected_augmentations.get('random_rotate90', False):
+            p = selected_augmentations.get('random_rotate90_p', 1.0)
+            if has_labels_dir:
+                seq_transform = A.Compose(
+                    [A.RandomRotate90(p=1.0)],
+                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                )
+            else:
+                seq_transform = A.Compose([A.RandomRotate90(p=1.0)])
+            sequential_transforms.append(seq_transform)
+            transform_names.append('random_rotate90')
+        
+        if selected_augmentations.get('rotate', False):
+            limit = selected_augmentations.get('rotate_limit', 15)
+            if has_labels_dir:
+                seq_transform = A.Compose(
+                    [A.Rotate(limit=limit, p=1.0)],
+                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                )
+            else:
+                seq_transform = A.Compose([A.Rotate(limit=limit, p=1.0)])
+            sequential_transforms.append(seq_transform)
+            transform_names.append('rotate')
+        
+        if selected_augmentations.get('brightness', False):
+            brightness_limit = selected_augmentations.get('brightness_limit', 0.2)
+            contrast_limit = selected_augmentations.get('contrast_limit', 0.0)
+            if has_labels_dir:
+                seq_transform = A.Compose(
+                    [A.RandomBrightnessContrast(
+                        brightness_limit=brightness_limit,
+                        contrast_limit=contrast_limit,
+                        p=1.0
+                    )],
+                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                )
+            else:
+                seq_transform = A.Compose([A.RandomBrightnessContrast(
+                    brightness_limit=brightness_limit,
+                    contrast_limit=contrast_limit,
+                    p=1.0
+                )])
+            sequential_transforms.append(seq_transform)
+            transform_names.append('brightness')
+        
+        if selected_augmentations.get('exposure', False):
+            gamma_limit = selected_augmentations.get('gamma_limit', (90, 110))
+            if has_labels_dir:
+                seq_transform = A.Compose(
+                    [A.RandomGamma(gamma_limit=gamma_limit, p=1.0)],
+                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                )
+            else:
+                seq_transform = A.Compose([A.RandomGamma(gamma_limit=gamma_limit, p=1.0)])
+            sequential_transforms.append(seq_transform)
+            transform_names.append('exposure')
+        
+        if not sequential_transforms:
+            raise ValueError("No augmentations selected")
+        
+        # Limit n_aug to number of available transforms
+        n_aug = min(n_aug, len(sequential_transforms))
+        
     else:
-        transform = A.Compose(transforms)
+        # Random mode: build single pipeline with all augmentations
+        transforms = []
+        
+        if selected_augmentations.get('horizontal_flip', False):
+            p = selected_augmentations.get('horizontal_flip_p', 0.5)
+            transforms.append(A.HorizontalFlip(p=p))
+        
+        if selected_augmentations.get('random_rotate90', False):
+            p = selected_augmentations.get('random_rotate90_p', 1.0)
+            transforms.append(A.RandomRotate90(p=p))
+        
+        if selected_augmentations.get('rotate', False):
+            limit = selected_augmentations.get('rotate_limit', 15)
+            p = selected_augmentations.get('rotate_p', 0.7)
+            transforms.append(A.Rotate(limit=limit, p=p))
+        
+        if selected_augmentations.get('brightness', False):
+            brightness_limit = selected_augmentations.get('brightness_limit', 0.2)
+            contrast_limit = selected_augmentations.get('contrast_limit', 0.0)
+            p = selected_augmentations.get('brightness_p', 0.7)
+            transforms.append(A.RandomBrightnessContrast(
+                brightness_limit=brightness_limit,
+                contrast_limit=contrast_limit,
+                p=p
+            ))
+        
+        if selected_augmentations.get('exposure', False):
+            gamma_limit = selected_augmentations.get('gamma_limit', (90, 110))
+            p = selected_augmentations.get('exposure_p', 0.7)
+            transforms.append(A.RandomGamma(gamma_limit=gamma_limit, p=p))
+        
+        if not transforms:
+            raise ValueError("No augmentations selected")
+        
+        # Create transform pipeline
+        # Include bbox_params only if labels directory is provided
+        if has_labels_dir:
+            transform = A.Compose(
+                transforms,
+                bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'])
+            )
+        else:
+            transform = A.Compose(transforms)
     
     # Get image files
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.bmp']
@@ -187,37 +310,83 @@ def augment_images(
             shutil.copy(label_path, os.path.join(save_labels_dir, base_name + '.txt'))
         
         # Apply augmentations
-        for i in range(n_aug):
-            try:
-                if has_labels and bboxes:
-                    transformed = transform(
-                        image=image,
-                        bboxes=bboxes,
-                        class_labels=class_labels
-                    )
-                    out_img = transformed['image']
-                    out_boxes = transformed['bboxes']
-                    out_labels = transformed['class_labels']
-                else:
-                    # No labels, just transform image
-                    transformed = transform(image=image)
-                    out_img = transformed['image']
-                    out_boxes = []
-                    out_labels = []
+        if mode == 'sequential':
+            # Sequential mode: apply one augmentation type per augmented image
+            for i in range(n_aug):
+                if i >= len(sequential_transforms):
+                    break
                 
-                out_img_name = f"{base_name}_aug{i+1}{ext}"
-                out_label_name = f"{base_name}_aug{i+1}.txt"
-                
-                cv2.imwrite(os.path.join(save_images_dir, out_img_name), out_img)
-                
-                if has_labels and out_boxes and save_labels_dir:
-                    os.makedirs(save_labels_dir, exist_ok=True)
-                    with open(os.path.join(save_labels_dir, out_label_name), 'w') as f:
-                        for l, b in zip(out_labels, out_boxes):
-                            f.write(f"{l} {' '.join(map(str, b))}\n")
-            except Exception as e:
-                print(f"Error augmenting {filename} (aug {i+1}): {e}")
-                continue
+                aug_name = transform_names[i] if i < len(transform_names) else f"aug{i+1}"
+                try:
+                    current_transform = sequential_transforms[i]
+                    
+                    if has_labels and bboxes:
+                        transformed = current_transform(
+                            image=image,
+                            bboxes=bboxes,
+                            class_labels=class_labels
+                        )
+                        out_img = transformed['image']
+                        out_boxes = transformed['bboxes']
+                        out_labels = transformed['class_labels']
+                    else:
+                        # No labels, just transform image
+                        transformed = current_transform(image=image)
+                        out_img = transformed['image']
+                        out_boxes = []
+                        out_labels = []
+                    
+                    # Clip boxes to [0,1] for sequential mode
+                    if has_labels and out_boxes:
+                        clipped_boxes = [clip_yolo_box(b) for b in out_boxes]
+                        out_boxes = clipped_boxes
+                    
+                    out_img_name = f"{base_name}_aug{i+1}_{aug_name}{ext}"
+                    out_label_name = f"{base_name}_aug{i+1}_{aug_name}.txt"
+                    
+                    cv2.imwrite(os.path.join(save_images_dir, out_img_name), out_img)
+                    
+                    if has_labels and out_boxes and save_labels_dir:
+                        os.makedirs(save_labels_dir, exist_ok=True)
+                        with open(os.path.join(save_labels_dir, out_label_name), 'w') as f:
+                            for l, b in zip(out_labels, out_boxes):
+                                f.write(f"{l} {' '.join(map(str, b))}\n")
+                except Exception as e:
+                    print(f"Error augmenting {filename} (aug {i+1}, {aug_name}): {e}")
+                    continue
+        else:
+            # Random mode: apply all augmentations randomly to each augmented image
+            for i in range(n_aug):
+                try:
+                    if has_labels and bboxes:
+                        transformed = transform(
+                            image=image,
+                            bboxes=bboxes,
+                            class_labels=class_labels
+                        )
+                        out_img = transformed['image']
+                        out_boxes = transformed['bboxes']
+                        out_labels = transformed['class_labels']
+                    else:
+                        # No labels, just transform image
+                        transformed = transform(image=image)
+                        out_img = transformed['image']
+                        out_boxes = []
+                        out_labels = []
+                    
+                    out_img_name = f"{base_name}_aug{i+1}{ext}"
+                    out_label_name = f"{base_name}_aug{i+1}.txt"
+                    
+                    cv2.imwrite(os.path.join(save_images_dir, out_img_name), out_img)
+                    
+                    if has_labels and out_boxes and save_labels_dir:
+                        os.makedirs(save_labels_dir, exist_ok=True)
+                        with open(os.path.join(save_labels_dir, out_label_name), 'w') as f:
+                            for l, b in zip(out_labels, out_boxes):
+                                f.write(f"{l} {' '.join(map(str, b))}\n")
+                except Exception as e:
+                    print(f"Error augmenting {filename} (aug {i+1}): {e}")
+                    continue
         
         processed_count += 1
         if progress_callback:
@@ -385,6 +554,21 @@ def render():
                 help="How many augmented versions to create for each original image",
                 key="n_aug_input"
             )
+    
+    # Augmentation mode selection
+    st.markdown("### Augmentation Mode")
+    augmentation_mode = st.radio(
+        "Select augmentation mode:",
+        options=['random', 'sequential'],
+        format_func=lambda x: {
+            'random': 'Random Augmentation (all augmentations applied randomly to each image)',
+            'sequential': 'Sequential Augmentation (one augmentation type per augmented image)'
+        }[x],
+        index=0,
+        help="Random: All selected augmentations are applied randomly to each augmented image.\n"
+             "\nSequential: Each augmented image gets only one specific augmentation type (aug1 = first selected, aug2 = second selected, etc.)",
+        key="augmentation_mode"
+    )
     
     # Augmentation selection
     st.markdown("### Select Augmentations")
@@ -587,7 +771,8 @@ def render():
                 save_labels_dir=save_labels_dir,
                 selected_augmentations=selected_augmentations,
                 n_aug=n_aug,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                mode=augmentation_mode
             )
             
             # Clear progress

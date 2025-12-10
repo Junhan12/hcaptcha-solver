@@ -91,7 +91,7 @@ def validate_question_and_get_model(question):
         return None
     
     # No challenge_type match - return None (do not fallback to active/recent model)
-    return None
+        return None
 
 
 def get_model_config(question):
