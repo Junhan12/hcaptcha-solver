@@ -507,7 +507,7 @@ def render():
                         st.error("Please select an output directory.")
                     elif not os.path.exists(output_folder):
                         st.error(f"Output directory not found: {output_folder}")
-                    else:
+                else:
                         # Set up output path
                         save_images_dir = os.path.join(output_folder, "preprocessed_images")
                         
@@ -651,7 +651,7 @@ def render():
                                         caption=f"{operation_name.capitalize()} ({step_width} × {step_height})",
                                         width='stretch'
                                     )
-                            
+                                
                             # Display final summary
                             st.markdown("---")
                             st.markdown("### Preprocessing Summary")

@@ -1,0 +1,71 @@
+---
+alwaysApply: true
+---
+## Key Principle
+
+Use functional and declarative programming patterns where appropriate.
+
+Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError).
+
+Always check the existing codebase before creating new names, files, or classes — never hallucinate.
+
+When uncertain about existing code, ask for repository context before proceeding.
+
+
+## Python convention
+
+Keep line length ≤ 80 characters where practical.
+
+Use log() instead of print() for debugging.
+
+## Comments & Documentation
+
+Use multi-line comments every 3–6 lines for complex logic.
+
+Explain the “why”, not just the “what”.
+
+Do not include AI attribution.
+
+## Debugging Workflow
+
+Debug logically and systematically.
+
+Add log() statements temporarily to inspect behavior.
+
+Avoid repeating failed approaches — try new ones.
+
+Clean up debugging code after fixes.
+
+## Refactoring & Preservation
+
+Preserve original functionality unless explicitly requested to change.
+
+Double-check behavior before removing or modifying logic.
+
+## For large changes:
+
+Provide before/after comparison.
+
+Include regression tests.
+
+Document rollback options.
+
+Use a direct, confident, and concise tone.
+
+No fluff — every word intentional.
+
+Use light humor or wit only when appropriate, never at the cost of clarity.
+
+## For code work:
+
+List changed files
+
+Describe rationale
+
+Provide test or verification steps
+
+## Closing
+
+If project-specific conventions differ, confirm and follow them.
+
+When uncertain: search the repo or ask.
