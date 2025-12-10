@@ -54,15 +54,16 @@ def get_challenge_type_id_for_question(question):
     return None
 
 try:
-    from client.clicker import perform_clicks  # type: ignore
-    log.success("Successfully imported perform_clicks from client.clicker")
+    from client.clicker import perform_clicks, extract_detections  # type: ignore
+    log.success("Successfully imported perform_clicks and extract_detections from client.clicker")
 except Exception as e:
     try:
-        from clicker import perform_clicks  # type: ignore
-        log.success("Successfully imported perform_clicks from clicker")
+        from clicker import perform_clicks, extract_detections  # type: ignore
+        log.success("Successfully imported perform_clicks and extract_detections from clicker")
     except Exception as e2:
         perform_clicks = None  # type: ignore
-        log.error(f"Failed to import perform_clicks: {e}, {e2}")
+        extract_detections = None  # type: ignore
+        log.error(f"Failed to import clicker functions: {e}, {e2}")
 
 
 def send_challenge_bytes(image_bytes, filename, question):
@@ -123,44 +124,52 @@ def send_canvas_images(driver, question):
             # Avoid sending large data URLs; API will read and compress bytes from file payload
             result = send_challenge_bytes(image_data, filename, question)
             
-            # Display inference results
+            # Log inference results (crawler responsibility: log detections, counts, performance metrics, challenge ids)
             log.subsection(f"Canvas {i} Inference Results")
             if isinstance(result, dict):
                 if 'error' in result:
-                    log.error(f"Error: {result['error']}", indent=1)
+                    log.error(f"Error: {result.get('error')}", indent=1)
+                    if 'message' in result:
+                        log.warning(f"Message: {result.get('message')}", indent=1)
                     log.warning("Inference NOT saved (errors are not stored)", indent=1)
-                elif 'results' in result:
-                    results = result.get('results', [])
-                    if isinstance(results, list) and len(results) > 0:
-                        log.success(f"Detections: {len(results)} object(s) found", indent=1)
-                        for idx, det in enumerate(results[:3], 1):  # Show first 3
+                else:
+                    # Use clicker's extract_detections to normalize response format
+                    detections = []
+                    if extract_detections:
+                        detections = extract_detections(result)
+                    elif 'results' in result:
+                        # Fallback if extract_detections not available
+                        results = result.get('results', [])
+                        if isinstance(results, list):
+                            detections = results
+                    
+                    # Log detection counts
+                    if detections:
+                        log.success(f"Detections: {len(detections)} object(s) found", indent=1)
+                        # Log first 3 detections as sample
+                        for idx, det in enumerate(detections[:3], 1):
                             if isinstance(det, dict):
                                 log.info(f"{idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})", indent=2)
-                        if len(results) > 3:
-                            log.info(f"... and {len(results) - 3} more", indent=2)
-                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
-                    elif isinstance(results, dict) and 'message' in results:
-                        log.warning(f"{results.get('message', 'No detections')}", indent=1)
-                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
+                        if len(detections) > 3:
+                            log.info(f"... and {len(detections) - 3} more", indent=2)
                     else:
                         log.warning("No detections found", indent=1)
-                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
-                else:
-                    log.debug(f"Response: {result}", indent=1)
+                    
+                    # Log challenge_id if present
+                    if 'challenge_id' in result:
+                        log.success(f"Inference saved to database (challenge_id: {result.get('challenge_id')})", indent=1)
+                    
+                    # Log performance metrics
+                    if 'perform_time' in result:
+                        log.info(f"Performance: {result['perform_time']:.3f}s", indent=1)
+                    if 'model' in result and result['model']:
+                        model_name = result['model'].get('model_name', 'Unknown')
+                        log.info(f"Model: {model_name}", indent=1)
                 
-                # Display performance metrics
-                if 'perform_time' in result:
-                    log.info(f"Performance: {result['perform_time']:.3f}s", indent=1)
-                if 'model' in result and result['model']:
-                    model_name = result['model'].get('model_name', 'Unknown')
-                    log.info(f"Model: {model_name}", indent=1)
-                
+                # Call clicker to perform clicks (crawler responsibility: call perform_clicks)
                 log.info("Performing automatic clicking on canvas using detections")
-                
-                # Attempt automatic clicking on canvas using detections
                 if perform_clicks and isinstance(result, dict):
                     try:
-                        # Get challenge_type_id for validation
                         challenge_type_id = get_challenge_type_id_for_question(question)
                         if challenge_type_id:
                             log.info(f"Challenge type ID: {challenge_type_id} - applying validation rules", indent=1)
@@ -278,54 +287,61 @@ def send_nested_div_images(driver, question):
             log.error(f"Unexpected batch error: {e}")
             result = {'error': 'unexpected', 'message': str(e)}
 
+        # Log inference results (crawler responsibility: log detections, counts, performance metrics, challenge ids)
         log.subsection("Batch Inference Results")
         if isinstance(result, dict):
             if 'error' in result:
-                log.error(f"Error: {result['error']}", indent=1)
+                log.error(f"Error: {result.get('error')}", indent=1)
+                if 'message' in result:
+                    log.warning(f"Message: {result.get('message')}", indent=1)
                 log.warning("Inference NOT saved (errors are not stored)", indent=1)
-            elif 'results' in result:
-                all_results = result.get('results', [])
-                if isinstance(all_results, list):
-                    total_detections = 0
-                    successful_images = 0
-                    error_images = 0
-                    
-                    for img_result in all_results:
-                        img_results = img_result.get('results', [])
-                        if isinstance(img_results, dict) and 'error' in img_results:
-                            error_images += 1
-                        elif isinstance(img_results, list):
-                            successful_images += 1
-                            total_detections += len(img_results)
-                    
-                    log.info(f"Images processed: {len(all_results)}", indent=1)
-                    log.success(f"Successful: {successful_images} image(s)", indent=1)
-                    if error_images > 0:
-                        log.error(f"Errors: {error_images} image(s) (not saved)", indent=1)
-                    log.info(f"Total detections: {total_detections} object(s)", indent=1)
-                    
-                    for img_result in all_results[:1]:
-                        img_results = img_result.get('results', [])
-                        if isinstance(img_results, list) and len(img_results) > 0:
-                            log.info(f"Sample detections from image {img_result.get('image_index', 1)}:", indent=1)
-                            for idx, det in enumerate(img_results[:3], 1):
-                                if isinstance(det, dict):
-                                    log.info(f"{idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})", indent=2)
-                    log.success(f"Inference records saved to database (challenge_id: {result.get('challenge_id', 'N/A')})", indent=1)
-                else:
-                    log.debug(f"Response: {result}", indent=1)
             else:
-                log.debug(f"Response: {result}", indent=1)
+                # Use clicker's extract_detections to get all detections (flattened from batch)
+                all_detections = []
+                if extract_detections:
+                    all_detections = extract_detections(result)
+                elif 'results' in result:
+                    # Fallback: manually count detections from batch format
+                    all_results = result.get('results', [])
+                    if isinstance(all_results, list):
+                        for img_result in all_results:
+                            img_results = img_result.get('results', [])
+                            if isinstance(img_results, list):
+                                all_detections.extend(img_results)
+                
+                # Log detection counts
+                if all_detections:
+                    log.info(f"Total detections: {len(all_detections)} object(s) across all images", indent=1)
+                    # Log first 3 detections as sample
+                    for idx, det in enumerate(all_detections[:3], 1):
+                        if isinstance(det, dict):
+                            log.info(f"{idx}. {det.get('class', 'unknown')} (conf: {det.get('confidence', 0):.2f})", indent=2)
+                    if len(all_detections) > 3:
+                        log.info(f"... and {len(all_detections) - 3} more", indent=2)
+                else:
+                    log.warning("No detections found", indent=1)
+                
+                # Log batch statistics
+                if 'results' in result:
+                    all_results = result.get('results', [])
+                    if isinstance(all_results, list):
+                        log.info(f"Images processed: {len(all_results)}", indent=1)
+                
+                # Log challenge_id if present
+                if 'challenge_id' in result:
+                    log.success(f"Inference records saved to database (challenge_id: {result.get('challenge_id')})", indent=1)
+                
+                # Log performance metrics
+                if 'perform_time' in result:
+                    log.info(f"Performance: {result['perform_time']:.3f}s", indent=1)
+                if 'model' in result and result['model']:
+                    model_name = result['model'].get('model_name', 'Unknown')
+                    log.info(f"Model: {model_name}", indent=1)
 
-            if 'perform_time' in result:
-                log.info(f"Performance: {result['perform_time']:.3f}s", indent=1)
-            if 'model' in result and result['model']:
-                model_name = result['model'].get('model_name', 'Unknown')
-                log.info(f"Model: {model_name}", indent=1)
-
+        # Call clicker to perform clicks (crawler responsibility: call perform_clicks)
+        log.info("Performing automatic clicking on tiles using detections")
         if perform_clicks and isinstance(result, dict):
             try:
-                # Get challenge_type_id for validation
                 challenge_type_id = get_challenge_type_id_for_question(question)
                 if challenge_type_id:
                     log.info(f"Challenge type ID: {challenge_type_id} - applying validation rules", indent=1)
@@ -586,8 +602,16 @@ def click_submit_button(driver, wait_after_click=3):
         return False
 
 
-def run_crawl_once():
-    """Run single crawl of hCaptcha challenge."""
+def run_crawl_once(max_rounds=20):
+    """
+    Run single crawl of hCaptcha challenge.
+    
+    Args:
+        max_rounds: Maximum number of rounds to process (default: 20)
+    
+    Returns:
+        dict: Summary of crawl results
+    """
     log.section("Starting Single Crawl")
     
     driver = None
@@ -648,7 +672,7 @@ def run_crawl_once():
         # This unified approach works for both single-crumb and multi-crumb challenges
         # Question is retrieved for each round
         round_number = 0
-        max_rounds = 20  # Safety limit to prevent infinite loops
+        # max_rounds is now a parameter (default: 20) - safety limit to prevent infinite loops
         
         while round_number < max_rounds:
             round_number += 1

@@ -22,27 +22,55 @@ from app.utils.logger import get_logger
 log = get_logger("clicker")
 
 
-def _extract_detections(result: Dict):
+def extract_detections(result: Dict) -> List[Dict]:
     """
-    Normalize API response variations into a flat detection list.
-    Returns [] if nothing actionable exists.
+    Normalize any allowed detection format from the API into a flat list of detection dicts.
+    
+    Per contract (hcaptcha-rules.mdc):
+    - Single image: result['results'] is a list of detection dicts
+    - Batch: result['results'] is a list of entries, each with 'image_index' and 'results' (list of detections)
+    
+    Args:
+        result: API response dictionary from /solvehcaptcha or /solvehcaptchabatch
+    
+    Returns:
+        List of detection dictionaries, each with 'bbox', 'class', 'confidence'
+        For batch responses, returns flattened list of all detections across all images
     """
     if not isinstance(result, dict):
         return []
     
-    detections = result.get("results", [])
-    
-    # Handle shape like {"message": "...", "detections": []}
-    if isinstance(detections, dict):
-        if "detections" in detections:
-            detections = detections.get("detections", [])
-        else:
-            return []
-    
-    if not isinstance(detections, list):
+    # Check for error responses
+    if 'error' in result:
+        log.debug(f"API returned error: {result.get('error')}", indent=1)
         return []
     
-    return detections
+    detections = result.get("results", [])
+    
+    # Handle batch response format: list of entries with 'image_index' and 'results'
+    if isinstance(detections, list) and len(detections) > 0:
+        first_entry = detections[0]
+        if isinstance(first_entry, dict) and 'image_index' in first_entry:
+            # Batch format: flatten all detections from all images
+            all_detections = []
+            for entry in detections:
+                entry_results = entry.get('results', [])
+                if isinstance(entry_results, list):
+                    all_detections.extend(entry_results)
+            return all_detections
+    
+    # Handle single image response format: direct list of detections
+    if isinstance(detections, list):
+        return detections
+    
+    # Handle legacy format: {"message": "...", "detections": []}
+    if isinstance(detections, dict):
+        if "detections" in detections:
+            legacy_detections = detections.get("detections", [])
+            if isinstance(legacy_detections, list):
+                return legacy_detections
+    
+    return []
 
 
 def _validate_detections_by_challenge_type(detections: List[Dict], challenge_type_id: Optional[str] = None) -> List[Dict]:
@@ -187,7 +215,7 @@ def click_canvas_from_response(
     
     Returns number of successful click attempts.
     """
-    detections = _extract_detections(api_result)
+    detections = extract_detections(api_result)
     log.info(f"Extracted {len(detections)} detections from API result", indent=1)
     
     if not detections:

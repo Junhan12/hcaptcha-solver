@@ -97,3 +97,46 @@ def list_postprocess_profiles(limit=100):
         print(f"Error listing postprocess profiles: {e}")
         return []
 
+
+def extract_detections(api_result):
+    """
+    Extract detections from API response using standard schema.
+    
+    Per contract (hcaptcha-rules.mdc):
+    - Single image: result['results'] is a list of detection dicts
+    - Batch: result['results'] is a list of entries, each with 'image_index' and 'results' (list of detections)
+    
+    Args:
+        api_result: API response dictionary from /solvehcaptcha or /solvehcaptchabatch
+    
+    Returns:
+        For single image: List of detection dictionaries
+        For batch: List of detection dictionaries (flattened from all images)
+    """
+    if not isinstance(api_result, dict):
+        return []
+    
+    # Check for error responses
+    if 'error' in api_result:
+        return []
+    
+    results = api_result.get("results", [])
+    
+    # Handle batch response format: list of entries with 'image_index' and 'results'
+    if isinstance(results, list) and len(results) > 0:
+        first_entry = results[0]
+        if isinstance(first_entry, dict) and 'image_index' in first_entry:
+            # Batch format: flatten all detections from all images
+            all_detections = []
+            for entry in results:
+                entry_results = entry.get('results', [])
+                if isinstance(entry_results, list):
+                    all_detections.extend(entry_results)
+            return all_detections
+    
+    # Handle single image response format: direct list of detections
+    if isinstance(results, list):
+        return results
+    
+    return []
+

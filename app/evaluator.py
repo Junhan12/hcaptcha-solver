@@ -17,6 +17,10 @@ import os
 from pathlib import Path
 from PIL import Image
 
+from app.utils.logger import get_logger
+
+log = get_logger("evaluator")
+
 
 def calculate_iou(bbox1: List[float], bbox2: List[float]) -> float:
     """
@@ -299,7 +303,7 @@ def calculate_map(
     true_positives: List[Dict],
     false_positives: List[Dict],
     false_negatives: List[Dict],
-    iou_threshold: float = 0.5
+    iou_threshold: float = 0.45
 ) -> float:
     """
     Calculate mean Average Precision (mAP) across all classes at a given IoU threshold.
@@ -681,11 +685,6 @@ def load_validation_dataset(data_yaml_path: str) -> Tuple[List[str], List[List[D
     all_annotations = []
     valid_image_files = []
     
-    # Debug: Print directory paths
-    print(f"Debug: images_dir = {images_dir}")
-    print(f"Debug: labels_dir = {labels_dir}")
-    print(f"Debug: labels_dir exists = {os.path.exists(labels_dir)}")
-    
     for img_path in image_files:
         # Get corresponding annotation file
         img_name = os.path.splitext(os.path.basename(img_path))[0]
@@ -699,15 +698,13 @@ def load_validation_dataset(data_yaml_path: str) -> Tuple[List[str], List[List[D
                 # Ensure we're not modifying anything - just reading dimensions
                 img.load()  # Load image data into memory (still read-only)
         except Exception as e:
-            print(f"Warning: Could not load image {img_path}: {e}")
+            log.warning(f"Could not load image {img_path}: {e}")
             continue
         
         # Load annotations
         annotations = load_yolo_annotation(annotation_file, img_width, img_height, class_names)
-        if annotations:
-            print(f"Debug: Loaded {len(annotations)} annotations from {annotation_file}")
-        else:
-            print(f"Debug: No annotations found in {annotation_file} (file exists: {os.path.exists(annotation_file)})")
+        if not annotations and os.path.exists(annotation_file):
+            log.debug(f"No annotations found in {annotation_file}", indent=1)
         all_annotations.append(annotations)
         valid_image_files.append(img_path)
     
