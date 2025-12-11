@@ -129,10 +129,13 @@ def render():
                                     }
 
                                     # Get preprocessing and postprocessing profiles for the selected model
-                                    preprocess_profile = get_preprocess_for_model(selected_model)
+                                    # NOTE: Preprocessing is NOT applied during evaluation to match YOLOv8 native behavior
+                                    # Preprocessing is only used for demo/inference purposes
+                                    preprocess_profile = None  # Explicitly set to None for evaluation
                                     postprocess_profile_retrieved = get_postprocess_for_model(selected_model)
 
                                     # Prepare postprocess profile for solve_captcha (full structure)
+                                    # For evaluation, use standard YOLOv8 thresholds to match training
                                     postprocess_profile = None
                                     if postprocess_profile_retrieved:
                                         postprocess_profile = {
@@ -140,6 +143,86 @@ def render():
                                             'name': postprocess_profile_retrieved.get('name'),
                                             'steps': postprocess_profile_retrieved.get('steps', [])
                                         }
+                                    
+                                    # Load model to get class names for validation
+                                    from app.solver import _model_cache, download_weights_bytes
+                                    from ultralytics import YOLO
+                                    import tempfile
+                                    
+                                    # Get model's class names for comparison
+                                    model_class_names = None
+                                    tmp_path = None
+                                    try:
+                                        # Try to get model from cache or load it
+                                        model = _model_cache.get(selected_model_id)
+                                        if model is None:
+                                            # Load model temporarily to get class names
+                                            weights_bytes = download_weights_bytes(selected_model_id)
+                                            if weights_bytes:
+                                                with tempfile.NamedTemporaryFile(delete=False, suffix='.pt') as tmp_file:
+                                                    tmp_file.write(weights_bytes)
+                                                    tmp_path = tmp_file.name
+                                                model = YOLO(tmp_path)
+                                                # Cache it
+                                                _model_cache[selected_model_id] = model
+                                        
+                                        if model and hasattr(model, 'names'):
+                                            model_class_names = model.names
+                                    except Exception as e:
+                                        st.warning(f"Could not load model to check class names: {e}")
+                                    finally:
+                                        # Clean up temp file if it was created
+                                        if tmp_path and os.path.exists(tmp_path):
+                                            try:
+                                                os.unlink(tmp_path)
+                                            except Exception:
+                                                pass  # Ignore cleanup errors
+                                    
+                                    # Validate class names and ordering
+                                    if model_class_names and class_names:
+                                        # Convert model.names (dict) to ordered list
+                                        model_names_list = [model_class_names[i] for i in sorted(model_class_names.keys())]
+                                        # Convert ground truth class_names (dict) to ordered list
+                                        gt_names_list = [class_names[i] for i in sorted(class_names.keys())]
+                                        
+                                        # Check class count
+                                        if len(model_names_list) != len(gt_names_list):
+                                            st.error(f"⚠️ **Class Count Mismatch:** Model has {len(model_names_list)} classes, dataset has {len(gt_names_list)} classes")
+                                        
+                                        # Check class name sets
+                                        model_names_set = set(model_names_list)
+                                        gt_names_set = set(gt_names_list)
+                                        
+                                        if model_names_set != gt_names_set:
+                                            missing_in_model = gt_names_set - model_names_set
+                                            missing_in_gt = model_names_set - gt_names_set
+                                            if missing_in_model:
+                                                st.error(f"⚠️ **Classes in dataset but not in model:** {sorted(missing_in_model)}")
+                                            if missing_in_gt:
+                                                st.error(f"⚠️ **Classes in model but not in dataset:** {sorted(missing_in_gt)}")
+                                        
+                                        # Check class ordering
+                                        if model_names_list != gt_names_list:
+                                            st.warning(f"⚠️ **Class Ordering Mismatch Detected!**")
+                                            st.warning("This can cause the 'shifted diagonal' pattern in confusion matrix.")
+                                            with st.expander("🔍 View Class Ordering Comparison"):
+                                                st.write("**Model Class Order:**", model_names_list)
+                                                st.write("**Dataset Class Order:**", gt_names_list)
+                                                st.write("**Order Match:**", "❌ NO" if model_names_list != gt_names_list else "✅ YES")
+                                                
+                                                # Show differences
+                                                differences = []
+                                                for idx, (model_name, gt_name) in enumerate(zip(model_names_list, gt_names_list)):
+                                                    if model_name != gt_name:
+                                                        differences.append(f"Position {idx}: Model='{model_name}' vs Dataset='{gt_name}'")
+                                                if differences:
+                                                    st.write("**Position Differences:**")
+                                                    for diff in differences:
+                                                        st.text(diff)
+                                            
+                                            st.info("💡 **Solution:** Ensure your model was trained with the same class ordering as in data.yaml. The evaluation will attempt to map classes by name, but ordering mismatches can cause systematic errors.")
+                                        else:
+                                            st.success("✅ Class names and ordering match between model and dataset")
 
                                     # Run inference directly on validation images (no API, no validation)
                                     all_predictions = []
@@ -153,13 +236,26 @@ def render():
 
                                         try:
                                             # Use native YOLOv8 evaluation mode to match training evaluation exactly
-                                            # This skips preprocessing and uses file paths directly, matching YOLOv8's native behavior
+                                            # IMPORTANT: Preprocessing is NOT applied during evaluation
+                                            # - use_native_eval=True passes file paths directly to YOLOv8 (no preprocessing)
+                                            # - This matches YOLOv8's native validation behavior
+                                            # - Preprocessing is only used for demo/inference (via API gateway)
+                                            # Use standard YOLOv8 evaluation thresholds: conf=0.25, iou=0.45
+                                            # These match YOLOv8's default validation settings
                                             inference_result = solve_captcha(
-                                                img_path,  # Pass file path directly for native evaluation
+                                                img_path,  # Pass file path directly for native evaluation (no preprocessing)
                                                 question="",  # Empty question - bypasses validation
                                                 config=model_config,
-                                                postprocess_profile=None,  # Skip postprocessing for native evaluation
-                                                use_native_eval=True,  # Enable native evaluation mode
+                                                postprocess_profile={
+                                                    'steps': [{
+                                                        'operation': 'nms',
+                                                        'params': {
+                                                            'confidence_threshold': 0.25,  # Standard YOLOv8 validation threshold
+                                                            'iou_threshold': 0.45  # Standard YOLOv8 validation threshold
+                                                        }
+                                                    }]
+                                                } if postprocess_profile_retrieved else None,  # Use standard thresholds for evaluation
+                                                use_native_eval=True,  # Enable native evaluation mode (skips preprocessing)
                                                 imgsz=None  # Use model's default image size (matches training)
                                             )
 
@@ -780,19 +876,53 @@ def render():
                                                         confusion_matrix[class_to_idx[pred_class], class_to_idx[pred_class]] += 1
                                                 
                                                 # Count false positives (predicted but not in ground truth)
+                                                # Try to find the actual GT class that was confused with (even if IoU < threshold)
+                                                from app.evaluator import calculate_iou
+                                                
                                                 for detection in fp:
                                                     pred_class = detection.get('class', '')
-                                                    if pred_class in class_to_idx:
-                                                        # Find the actual class from ground truth (if any)
+                                                    if pred_class not in class_to_idx:
+                                                        continue
+                                                    
+                                                    pred_bbox = detection.get('bbox', [])
+                                                    if len(pred_bbox) < 4:
+                                                        # Invalid bbox, assign to background
                                                         gt_class = 'background'
                                                         confusion_matrix[class_to_idx[pred_class], class_to_idx[gt_class]] += 1
+                                                        continue
+                                                    
+                                                    # Find best matching GT box (even if IoU < threshold) to identify confusion
+                                                    best_iou = 0.0
+                                                    best_gt_class = 'background'
+                                                    
+                                                    for gt in ground_truth:
+                                                        gt_bbox = gt.get('bbox', [])
+                                                        if len(gt_bbox) < 4:
+                                                            continue
+                                                        
+                                                        iou = calculate_iou(pred_bbox, gt_bbox)
+                                                        if iou > best_iou:
+                                                            best_iou = iou
+                                                            gt_class_name = gt.get('class', '')
+                                                            # Apply class mapping if needed
+                                                            if class_mapping and gt_class_name in class_mapping:
+                                                                gt_class_name = class_mapping[gt_class_name]
+                                                            best_gt_class = gt_class_name
+                                                    
+                                                    # Use background if no reasonable match found (IoU < 0.1)
+                                                    if best_iou < 0.1:
+                                                        best_gt_class = 'background'
+                                                    
+                                                    if best_gt_class in class_to_idx:
+                                                        confusion_matrix[class_to_idx[pred_class], class_to_idx[best_gt_class]] += 1
                                                 
                                                 # Count false negatives (in ground truth but not predicted)
                                                 for detection in fn:
                                                     gt_class = detection.get('class', '')
                                                     if gt_class in class_to_idx:
                                                         pred_class = 'background'
-                                                        confusion_matrix[class_to_idx[pred_class], class_to_idx[gt_class]] += 1
+                                                        if pred_class in class_to_idx:
+                                                            confusion_matrix[class_to_idx[pred_class], class_to_idx[gt_class]] += 1
                                                 
                                                 # Create confusion matrix heatmap
                                                 cm_fig = go.Figure(data=go.Heatmap(

@@ -238,6 +238,9 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
             image_source = image
         elif isinstance(image, bytes):
             # Image bytes - convert to PIL Image (YOLO's preferred format)
+            # NOTE: If bytes come from OpenCV's imencode() (via preprocessing),
+            # they are already in RGB format because OpenCV automatically converts
+            # BGR->RGB during JPEG/PNG encoding. PIL will read them correctly as RGB.
             try:
                 img = Image.open(io.BytesIO(image))
                 # Convert to RGB (YOLO requires RGB format)
@@ -253,6 +256,7 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
                     img = img.convert('RGB')
                 
                 # Pass PIL Image directly to YOLO (best compatibility)
+                # PIL Image is in RGB format, which matches YOLO's expectations
                 image_source = img
             except Exception as e:
                 return {'error': f'Failed to decode image bytes: {str(e)}'}
@@ -269,6 +273,20 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
             try:
                 img_array = image.copy()  # Make a copy to avoid modifying original
                 
+                # CRITICAL: Handle color space conversion
+                # OpenCV uses BGR format, but YOLO expects RGB
+                # If this is a 3-channel color image, assume it's BGR (OpenCV default) and convert to RGB
+                if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+                    # Check if cv2 is available for color conversion
+                    try:
+                        import cv2
+                        # Convert BGR to RGB (OpenCV arrays are BGR by default)
+                        img_array = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
+                    except ImportError:
+                        # If cv2 not available, assume array is already RGB and proceed
+                        # This is a fallback - ideally cv2 should be available
+                        pass
+                
                 # Ensure image has 3 channels (RGB) for YOLO
                 if len(img_array.shape) == 2:
                     # Grayscale image (H, W) -> convert to RGB (H, W, 3)
@@ -278,10 +296,17 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
                     img_array = np.repeat(img_array, 3, axis=2)
                 elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
                     # RGBA -> RGB
-                    rgb_array = img_array[:, :, :3]
-                    alpha = img_array[:, :, 3:4] / 255.0
-                    white_bg = np.ones_like(rgb_array) * 255
-                    img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+                    # Note: If this came from OpenCV, it's BGRA, so we need BGR->RGB conversion first
+                    try:
+                        import cv2
+                        # Convert BGRA to RGB
+                        img_array = cv2.cvtColor(img_array, cv2.COLOR_BGRA2RGB)
+                    except ImportError:
+                        # Fallback: assume RGBA and convert manually
+                        rgb_array = img_array[:, :, :3]
+                        alpha = img_array[:, :, 3:4] / 255.0
+                        white_bg = np.ones_like(rgb_array) * 255
+                        img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
                 
                 # Ensure dtype is uint8 and values are in [0, 255] range
                 if img_array.dtype != np.uint8:
@@ -291,7 +316,7 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
                         img_array = img_array.astype(np.uint8)
                 
                 # Convert numpy array to PIL Image (YOLO's preferred format)
-                # PIL expects (H, W, C) format with uint8 dtype
+                # PIL expects (H, W, C) format with uint8 dtype in RGB order
                 image_source = Image.fromarray(img_array, mode='RGB')
             except Exception as e:
                 return {'error': f'Failed to convert numpy array to PIL Image: {str(e)}'}
@@ -327,6 +352,7 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
                     # Format: [x_min, y_min, x_max, y_max] as required by API contract
                     detections.append({
                         'class': class_name,
+                        'class_id': class_id,  # Include class_id for better class mapping in evaluation
                         'confidence': confidence,
                         'bbox': [float(x1), float(y1), float(x2), float(y2)]  # Intrinsic coordinates
                     })

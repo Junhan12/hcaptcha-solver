@@ -70,8 +70,8 @@ def extract_detections(result: Dict) -> List[Dict]:
             if isinstance(legacy_detections, list):
                 return legacy_detections
     
-    return []
-
+            return []
+    
 
 def _validate_detections_by_challenge_type(detections: List[Dict], challenge_type_id: Optional[str] = None) -> List[Dict]:
     """

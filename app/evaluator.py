@@ -220,7 +220,8 @@ def calculate_ap(
     """
     Calculate Average Precision (AP) for a specific class at a given IoU threshold.
     
-    Uses the 11-point interpolation method (COCO style).
+    Uses all-point interpolation (area under PR curve) to match YOLOv8's native evaluation.
+    This method calculates the area under the precision-recall curve using trapezoidal integration.
     
     Args:
         true_positives: List of TP detections
@@ -286,15 +287,42 @@ def calculate_ap(
         precisions.append(precision)
         recalls.append(recall)
     
-    # Calculate AP using 11-point interpolation
+    # Calculate AP using all-point interpolation (area under PR curve)
+    # This matches YOLOv8's native evaluation method
+    if len(recalls) == 0:
+        return 0.0
+    
+    # Make precision monotonic decreasing (interpolate backwards)
+    # For each recall level, use the maximum precision at that recall or higher
+    # This ensures the PR curve is non-increasing
+    precisions_interp = []
+    max_precision = 0.0
+    for i in range(len(recalls) - 1, -1, -1):
+        max_precision = max(max_precision, precisions[i])
+        precisions_interp.insert(0, max_precision)
+    
+    # Calculate area under curve using trapezoidal integration
     ap = 0.0
-    for t in np.arange(0, 1.1, 0.1):
-        # Find max precision where recall >= t
-        max_precision = 0.0
-        for i, rec in enumerate(recalls):
-            if rec >= t:
-                max_precision = max(max_precision, precisions[i])
-        ap += max_precision / 11.0
+    
+    # Add point at (0, 1) if needed for proper interpolation
+    if recalls[0] > 0:
+        recalls_with_start = [0.0] + recalls
+        precisions_with_start = [1.0] + precisions_interp
+    else:
+        recalls_with_start = recalls
+        precisions_with_start = precisions_interp
+    
+    # Add point at (1, last_precision) if needed
+    if recalls_with_start[-1] < 1.0:
+        recalls_with_start.append(1.0)
+        precisions_with_start.append(precisions_with_start[-1] if precisions_with_start else 0.0)
+    
+    # Trapezoidal integration
+    for i in range(1, len(recalls_with_start)):
+        recall_diff = recalls_with_start[i] - recalls_with_start[i-1]
+        # Use average precision for trapezoidal rule (more accurate than single point)
+        precision_avg = (precisions_with_start[i] + precisions_with_start[i-1]) / 2.0
+        ap += recall_diff * precision_avg
     
     return ap
 

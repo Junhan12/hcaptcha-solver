@@ -649,24 +649,24 @@ def solve_hcaptcha_batch():
     
     if error:
         response['error'] = error
-    
+        
     # Add preprocessing metadata for UI display (from first image's preprocessing)
-    if preprocess_profile:
+        if preprocess_profile:
         # Create preprocess metadata from profile
-        preprocess_meta = {
-            'preprocess_id': preprocess_profile.get('preprocess_id'),
+            preprocess_meta = {
+                'preprocess_id': preprocess_profile.get('preprocess_id'),
             'applied_steps': [],  # Batch doesn't track individual steps per image
-        }
+            }
         response['preprocess'] = preprocess_meta
-    
+        
     # Add postprocessing metadata for UI display
     if postprocess_profile_retrieved:
-        postprocess_meta = {
+            postprocess_meta = {
             'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
             'name': postprocess_profile_retrieved.get('name'),
             'steps': postprocess_profile_retrieved.get('steps', []),
         }
-        response['postprocess'] = postprocess_meta
+    response['postprocess'] = postprocess_meta
     
     return jsonify(response)
 
