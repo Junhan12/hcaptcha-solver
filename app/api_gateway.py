@@ -34,6 +34,10 @@ except Exception:
     from app.database import create_activity_log
     from app.preprocess import apply_preprocess
 
+from app.utils.logger import get_logger
+
+log = get_logger("api")
+
 app = Flask(__name__)
 
 # =========================
@@ -45,15 +49,36 @@ def solve_hcaptcha():
     """
     Headless API endpoint for processing single image challenges.
     
+    Contract (per hcaptcha-rules.mdc):
+    - Request: image bytes (multipart/form-data 'image') + question string (form 'question')
+    - Response: {
+        'results': list of detection dicts (each with 'bbox', 'class', 'confidence'),
+        'model': optional model info dict,
+        'perform_time': optional float,
+        'challenge_id': optional string,
+        'message': optional string,
+        'error': optional string
+      }
+    
+    Detection dict format:
+    - 'bbox': [x_min, y_min, x_max, y_max] in intrinsic image coordinates (model space)
+    - 'class': predicted class label (str)
+    - 'confidence': float between 0-1
+    
     Intended usage:
     - Crawler (client/crawler.py): Sends canvas images from hCAPTCHA challenges
-    - Clicker (client/clicker.py): Sends images for processing before clicking
-    - Streamlit upload page: Manual image upload for testing
-    
-    This endpoint is NOT intended for general API usage.
+    - External clients via HTTP API
     """
+    # Validate request
+    if 'image' not in request.files:
+        return jsonify({
+            'error': 'missing_image',
+            'message': 'No image file provided in request',
+            'results': []
+        }), 400
+    
     img = request.files['image']
-    question = request.form.get('question')
+    question = request.form.get('question', '')
     
     # For now: create challenge, derive challenge_type, and only retrieve model
     import time
@@ -82,7 +107,7 @@ def solve_hcaptcha():
         if ct_doc:
             challenge_type_matched = True
             challenge_type_id = ct_doc.get("challenge_type_id")
-            print(f"Challenge type matched: {challenge_type_id}")
+            log.info(f"Challenge type matched: {challenge_type_id}")
             
             # Get model directly from challenge_type document
             model_id = ct_doc.get("model_id")
@@ -90,11 +115,11 @@ def solve_hcaptcha():
                 from .database import get_model_by_id
                 model_doc = get_model_by_id(model_id)
                 if model_doc:
-                    print(f"Model found: {model_id}")
+                    log.info(f"Model found: {model_id}")
                 else:
-                    print(f"Warning: challenge_type {challenge_type_id} has model_id {model_id}, but model not found in database")
+                    log.warning(f"challenge_type {challenge_type_id} has model_id {model_id}, but model not found in database")
             else:
-                print(f"Warning: challenge_type {challenge_type_id} has no model_id set")
+                log.warning(f"challenge_type {challenge_type_id} has no model_id set")
             
             # Only save challenge if it matches a challenge_type
             challenge_id = f"ch-{int(t0)}"
@@ -110,11 +135,11 @@ def solve_hcaptcha():
             )
         else:
             # No matching challenge_type - don't save challenge
-            print(f"No matching challenge_type for question: {question}")
+            log.info(f"No matching challenge_type for question: {question}")
             challenge_id = None
     else:
         # No question provided - don't save challenge
-        print("No question provided - skipping challenge save")
+        log.info("No question provided - skipping challenge save")
     
     # Apply preprocessing if model has preprocess_id
     preprocess_meta = None
@@ -131,7 +156,7 @@ def solve_hcaptcha():
                 # Use processed bytes for storage
                 img_bytes = processed_img_bytes
         except Exception as e:
-            print(f"Preprocessing error: {e}")
+            log.warning(f"Preprocessing error: {e}")
             preprocess_meta = None
     
     # Retrieve postprocess profile for model inference
@@ -146,17 +171,19 @@ def solve_hcaptcha():
                     'steps': postprocess_profile.get('steps', []),  # List of operations
                 }
         except Exception as e:
-            print(f"Postprocess retrieval error: {e}")
+            log.warning(f"Postprocess retrieval error: {e}")
             postprocess_meta = None
     
     # Determine message when no matching challenge_type
     message = None
+    error = None
     if not challenge_type_matched:
         message = "no match challenge type found"
+        error = "no match challenge type found"
         # If no match, return early without processing
         if not challenge_id:
             return jsonify({
-                'error': 'no match challenge type found',
+                'error': error,
                 'message': message,
                 'results': [],
             })
@@ -186,32 +213,46 @@ def solve_hcaptcha():
                 config,
                 postprocess_profile=postprocess_profile
             )
-            # Handle new return format: could be list, dict with 'error', or dict with 'message'
+            # Normalize inference_results to always be a list of detections
+            # solve_captcha returns: list, dict with 'error', or dict with 'message'
             if isinstance(inference_results, dict):
                 if 'error' in inference_results:
-                    print(f"Inference error: {inference_results['error']}")
-                    inference_results = {'error': inference_results['error']}
+                    error = inference_results['error']
+                    message = f"Inference failed: {error}"
+                    inference_results = []
                 elif 'message' in inference_results:
-                    print(f"Inference message: {inference_results['message']}")
-                    inference_results = inference_results.get('detections', [])
+                    # No detections found - return empty list
+                    message = inference_results.get('message', 'no detected output')
+                    inference_results = []
+                else:
+                    # Unexpected dict format - treat as error
+                    error = 'invalid_inference_result'
+                    message = 'Inference returned unexpected format'
+                    inference_results = []
+            elif not isinstance(inference_results, list):
+                # Invalid format - return empty list
+                error = 'invalid_inference_result'
+                message = 'Inference returned invalid format'
+                inference_results = []
         else:
             # No model document found
-            inference_results = {'error': 'no model selected'}
+            error = 'no model selected'
+            message = 'No model available for this challenge type'
+            inference_results = []
     except Exception as e:
-        print(f"Inference error: {e}")
-        inference_results = {'error': str(e)}
+        log.error(f"Inference error: {e}")
+        error = 'inference_error'
+        message = f"Inference failed: {str(e)}"
+        inference_results = []
     
     inference_end_time = time.time()
     inference_speed = inference_end_time - inference_start_time
     t1 = time.time()
     
     # Save inference to inference collection only if no errors
-    has_error = False
-    if isinstance(inference_results, dict) and 'error' in inference_results:
-        has_error = True
-        print(f"Skipping inference save due to error: {inference_results['error']}")
+    has_error = error is not None
     
-    if not has_error:
+    if not has_error and inference_results:
         try:
             inference_id = f"inf-{int(time.time() * 1000)}"  # Use milliseconds for uniqueness
             model_id = config.get('model_id') or (model_doc.get('model_id') if model_doc else None)
@@ -230,7 +271,7 @@ def solve_hcaptcha():
                     model_id=model_id,
                     challenge_id=challenge_id
                 )
-                print(f"Saved inference record: {inference_id}")
+                log.debug(f"Saved inference record: {inference_id}", indent=1)
                 # Save activity log entry
                 try:
                     log_id = f"act-{int(time.time() * 1000)}"
@@ -240,27 +281,27 @@ def solve_hcaptcha():
                         model_id=model_id,
                         inference_id=inference_id
                     )
-                    print(f"Saved activity_log record: {log_id}")
+                    log.debug(f"Saved activity_log record: {log_id}", indent=1)
                 except Exception as e:
-                    print(f"Failed to save activity_log: {e}")
+                    log.warning(f"Failed to save activity_log: {e}")
             else:
                 if not challenge_id:
-                    print(f"Skipping inference save: challenge not saved (no matching challenge_type)")
+                    log.debug("Skipping inference save: challenge not saved (no matching challenge_type)", indent=1)
                 else:
-                    print(f"Skipping inference save: model_id={model_id}, challenge_id={challenge_id}")
+                    log.debug(f"Skipping inference save: model_id={model_id}, challenge_id={challenge_id}", indent=1)
         except Exception as e:
-            print(f"Failed to save inference record: {e}")
+            log.warning(f"Failed to save inference record: {e}")
             import traceback
             traceback.print_exc()
-    # Convert processed image to base64 for display
-    processed_image_base64 = None
-    try:
-        processed_image_base64 = base64.b64encode(processed_img_bytes).decode('utf-8')
-    except Exception as e:
-        print(f"Failed to encode processed image: {e}")
     
-    # Respond
-    safe_model = None
+    # Build response according to contract
+    # Contract: results (required), optional: model, perform_time, challenge_id, message, error
+    # Also include preprocess/postprocess metadata for UI display
+    response = {
+        'results': inference_results,  # Always a list
+    }
+    
+    # Add optional fields only if they have values
     if model_doc:
         safe_model = dict(model_doc)
         # Make ObjectId JSON-safe
@@ -268,34 +309,75 @@ def solve_hcaptcha():
             safe_model['_id'] = str(safe_model['_id'])
         if safe_model.get('weights'):
             safe_model['weights'] = str(safe_model['weights'])
-    return jsonify({
-        'results': inference_results,
-        'processed_image': processed_image_base64,
-        'perform_time': t1-t0,
-        'challenge_id': challenge_id,
-        'model': safe_model,
-        'preprocess': preprocess_meta,
-        'postprocess': postprocess_meta,
-        'message': message,
-    })
+        response['model'] = safe_model
+    
+    if challenge_id:
+        response['challenge_id'] = challenge_id
+    
+    if t1 - t0 > 0:
+        response['perform_time'] = t1 - t0
+    
+    if message:
+        response['message'] = message
+    
+    if error:
+        response['error'] = error
+    
+    # Add preprocessing metadata for UI display
+    if preprocess_meta:
+        response['preprocess'] = preprocess_meta
+    
+    # Add postprocessing metadata for UI display
+    if postprocess_meta:
+        response['postprocess'] = postprocess_meta
+    
+    # Add preprocessed image for UI display (base64 encoded)
+    # Only include if preprocessing was actually applied
+    if preprocess_meta:
+        try:
+            processed_image_b64 = base64.b64encode(processed_img_bytes).decode('utf-8')
+            response['processed_image'] = processed_image_b64
+        except Exception as e:
+            log.warning(f"Failed to encode processed image: {e}")
+    
+    return jsonify(response)
 
 @app.route('/solve_hcaptcha_batch', methods=['POST'])
 def solve_hcaptcha_batch():
     """
     Headless API endpoint for processing multiple images (tiles) in batch.
     
+    Contract (per hcaptcha-rules.mdc):
+    - Request: multiple image bytes (multipart/form-data 'images') + question string (form 'question')
+    - Response: {
+        'results': list of per-image entries, each with:
+            - 'image_index': int (1-based)
+            - 'results': list of detection dicts (each with 'bbox', 'class', 'confidence')
+        'model': optional model info dict,
+        'perform_time': optional float,
+        'challenge_id': optional string,
+        'message': optional string,
+        'error': optional string
+      }
+    
+    Detection dict format:
+    - 'bbox': [x_min, y_min, x_max, y_max] in intrinsic image coordinates (model space)
+    - 'class': predicted class label (str)
+    - 'confidence': float between 0-1
+    
     Intended usage:
     - Crawler (client/crawler.py): Sends multiple tile images from hCAPTCHA challenges
-    - Clicker (client/clicker.py): Sends batch images for processing before clicking
-    
-    This endpoint is NOT intended for general API usage.
-    Stores images as an array of compressed Binary data.
     """
+    # Validate request
     images = request.files.getlist('images')
-    question = request.form.get('question')
-    
     if not images:
-        return jsonify({'error': 'No images provided'}), 400
+        return jsonify({
+            'error': 'missing_images',
+            'message': 'No images provided in request',
+            'results': []
+        }), 400
+    
+    question = request.form.get('question', '')
     
     # Identify config view (not used for solving now)
     config = get_model_config(question)
@@ -319,18 +401,18 @@ def solve_hcaptcha_batch():
         if ct_doc:
             challenge_type_matched = True
             challenge_type_id = ct_doc.get("challenge_type_id")
-            print(f"Challenge type matched: {challenge_type_id}")
+            log.info(f"Challenge type matched: {challenge_type_id}")
             
             # Get model directly from challenge_type document
             model_id = ct_doc.get("model_id")
             if model_id:
                 model_doc = get_model_by_id(model_id)
                 if model_doc:
-                    print(f"Model found: {model_id}")
+                    log.info(f"Model found: {model_id}")
                 else:
-                    print(f"Warning: challenge_type {challenge_type_id} has model_id {model_id}, but model not found in database")
+                    log.warning(f"challenge_type {challenge_type_id} has model_id {model_id}, but model not found in database")
             else:
-                print(f"Warning: challenge_type {challenge_type_id} has no model_id set")
+                log.warning(f"challenge_type {challenge_type_id} has no model_id set")
             
             # Only save challenge if it matches a challenge_type
             single_challenge_id = f"ch-{int(t0)}"
@@ -342,11 +424,11 @@ def solve_hcaptcha_batch():
             )
         else:
             # No matching challenge_type - don't save challenge
-            print(f"No matching challenge_type for question: {question}")
+            log.info(f"No matching challenge_type for question: {question}")
             single_challenge_id = None
     else:
         # No question provided - don't save challenge
-        print("No question provided - skipping challenge save")
+        log.info("No question provided - skipping challenge save")
     
     # Get preprocessing profile if model has preprocess_id
     preprocess_profile = None
@@ -354,7 +436,7 @@ def solve_hcaptcha_batch():
         try:
             preprocess_profile = get_preprocess_for_model(model_doc)
         except Exception as e:
-            print(f"Preprocess profile retrieval error: {e}")
+            log.warning(f"Preprocess profile retrieval error: {e}")
     
     # Get postprocess profile for inference (retrieve once, use for all images)
     postprocess_profile_retrieved = None
@@ -362,12 +444,13 @@ def solve_hcaptcha_batch():
         try:
             postprocess_profile_retrieved = get_postprocess_for_model(model_doc)
         except Exception as e:
-            print(f"Postprocess profile retrieval error: {e}")
+            log.warning(f"Postprocess profile retrieval error: {e}")
     
     # Process each image with preprocessing and inference
-    processed_images_base64 = []
     all_results = []
     base_timestamp = int(time.time() * 1000)  # Base timestamp for all images in this batch
+    message = None
+    error = None
     
     for idx, img in enumerate(images, start=1):
         # Read raw bytes for compression and model use
@@ -382,14 +465,12 @@ def solve_hcaptcha_batch():
         
         # Apply preprocessing if profile exists
         processed_img_bytes = img_bytes
-        print("start preprocessing image")
         if preprocess_profile:
-            print("start applying preprocessing")
             try:
                 processed_img_bytes, _, _ = apply_preprocess(img_bytes, preprocess_profile)
-                print(f"Preprocessed image {idx} successfully")
+                log.debug(f"Preprocessed image {idx} successfully", indent=1)
             except Exception as e:
-                print(f"Preprocessing error for image {idx}: {e}")
+                log.warning(f"Preprocessing error for image {idx}: {e}")
         
         # Run inference on processed image with postprocess steps
         image_results = []
@@ -411,34 +492,49 @@ def solve_hcaptcha_batch():
                     config,
                     postprocess_profile=postprocess_profile
                 )
-                # Handle new return format: could be list, dict with 'error', or dict with 'message'
+                # Normalize image_results to always be a list of detections
+                # solve_captcha returns: list, dict with 'error', or dict with 'message'
                 if isinstance(image_results, dict):
                     if 'error' in image_results:
-                        print(f"Inference error for image {idx}: {image_results['error']}")
-                        image_results = {'error': image_results['error']}
+                        log.warning(f"Inference error for image {idx}: {image_results['error']}")
+                        image_results = []  # Return empty list on error
+                        if error is None:
+                            error = 'inference_error'
+                            message = f"Inference failed for one or more images: {image_results.get('error', 'unknown error')}"
                     elif 'message' in image_results:
-                        print(f"Inference message for image {idx}: {image_results['message']}")
-                        image_results = image_results.get('detections', [])
+                        # No detections found - return empty list
+                        log.debug(f"Inference message for image {idx}: {image_results.get('message')}", indent=1)
+                        image_results = []
+                    else:
+                        # Unexpected dict format - treat as error
+                        image_results = []
+                        if error is None:
+                            error = 'invalid_inference_result'
+                            message = 'Inference returned unexpected format for one or more images'
+                elif not isinstance(image_results, list):
+                    # Invalid format - return empty list
+                    image_results = []
+                    if error is None:
+                        error = 'invalid_inference_result'
+                        message = 'Inference returned invalid format for one or more images'
             else:
                 # No model document found
-                image_results = {'error': 'no model selected'}
+                image_results = []
+                if error is None:
+                    error = 'no model selected'
+                    message = 'No model available for this challenge type'
             
             inference_end_time = time.time()
             inference_speed = inference_end_time - inference_start_time
             
+            # Contract: results is list of entries with image_index (1-based) and results (list of detections)
             all_results.append({
-                'image_index': idx,
-                'image_name': img.filename,
-                'results': image_results
+                'image_index': idx,  # 1-based index per contract
+                'results': image_results  # Always a list of detection dicts
             })
             
-            # Save inference to inference collection only if no errors
-            has_error = False
-            if isinstance(image_results, dict) and 'error' in image_results:
-                has_error = True
-                print(f"Skipping inference save for image {idx} due to error: {image_results['error']}")
-            
-            if not has_error:
+            # Save inference to inference collection only if no errors and has detections
+            if image_results:
                 try:
                     inference_id = f"inf-{base_timestamp}-{idx}"  # Use base timestamp and index for uniqueness
                     model_id = config.get('model_id') or (model_doc.get('model_id') if model_doc else None)
@@ -457,7 +553,7 @@ def solve_hcaptcha_batch():
                             model_id=model_id,
                             challenge_id=single_challenge_id
                         )
-                        print(f"Saved inference record for image {idx}: {inference_id}")
+                        log.debug(f"Saved inference record for image {idx}: {inference_id}", indent=1)
                         # Save activity log entry for this image
                         try:
                             log_id = f"act-{base_timestamp}-{idx}"
@@ -467,42 +563,37 @@ def solve_hcaptcha_batch():
                                 model_id=model_id,
                                 inference_id=inference_id
                             )
-                            print(f"Saved activity_log record for image {idx}: {log_id}")
+                            log.debug(f"Saved activity_log record for image {idx}: {log_id}", indent=1)
                         except Exception as e:
-                            print(f"Failed to save activity_log for image {idx}: {e}")
+                            log.warning(f"Failed to save activity_log for image {idx}: {e}")
                     else:
                         if not single_challenge_id:
-                            print(f"Skipping inference save for image {idx}: challenge not saved (no matching challenge_type)")
+                            log.debug(f"Skipping inference save for image {idx}: challenge not saved (no matching challenge_type)", indent=1)
                         else:
-                            print(f"Skipping inference save for image {idx}: model_id={model_id}, challenge_id={single_challenge_id}")
+                            log.debug(f"Skipping inference save for image {idx}: model_id={model_id}, challenge_id={single_challenge_id}", indent=1)
                 except Exception as e:
-                    print(f"Failed to save inference record for image {idx}: {e}")
+                    log.warning(f"Failed to save inference record for image {idx}: {e}")
                     import traceback
                     traceback.print_exc()
                 
         except Exception as e:
-            print(f"Inference error for image {idx}: {e}")
+            log.error(f"Inference error for image {idx}: {e}")
+            # On error, add entry with empty results list
             all_results.append({
                 'image_index': idx,
-                'image_name': img.filename,
-                'results': {'error': str(e)}
+                'results': []  # Empty list on error
             })
+            if error is None:
+                error = 'inference_error'
+                message = f"Inference failed for one or more images: {str(e)}"
             # Do not save inference record when there's an error
-        
-        # Convert processed image to base64 for display
-        try:
-            processed_img_b64 = base64.b64encode(processed_img_bytes).decode('utf-8')
-            processed_images_base64.append(processed_img_b64)
-        except Exception as e:
-            print(f"Failed to encode image {idx}: {e}")
-            processed_images_base64.append(None)
         
         # Compress each processed image and store in array
         try:
             compressed_data = zlib.compress(processed_img_bytes)
             compressed_images.append(Binary(compressed_data))
         except Exception as e:
-            print(f"Failed to compress image {img.filename}: {e}")
+            log.warning(f"Failed to compress image {img.filename}: {e}")
     
     # Update challenge with processed images
     if compressed_images:
@@ -513,59 +604,71 @@ def solve_hcaptcha_batch():
                 challenge_img=compressed_images,
             )
         except Exception as e:
-            print(f"Failed to update challenge with images: {e}")
+            log.warning(f"Failed to update challenge with images: {e}")
     
     t1 = time.time()
     
-    # Prepare response data
-    safe_model = None
-    preprocess_meta = None
-    postprocess_meta = None
+    # Determine message/error for challenge type mismatch
+    if not challenge_type_matched:
+        if message is None:
+            message = "no match challenge type found"
+        if error is None:
+            error = "no match challenge type found"
+        # If no match, return early without processing
+        if not single_challenge_id:
+            return jsonify({
+                'error': error,
+                'message': message,
+                'results': [],
+            })
     
+    # Build response according to contract
+    # Contract: results (required), optional: model, perform_time, challenge_id, message, error
+    # Also include preprocess/postprocess metadata for UI display
+    response = {
+        'results': all_results,  # List of entries with image_index and results
+    }
+    
+    # Add optional fields only if they have values
     if model_doc:
         safe_model = dict(model_doc)
         if safe_model.get('_id'):
             safe_model['_id'] = str(safe_model['_id'])
         if safe_model.get('weights'):
             safe_model['weights'] = str(safe_model['weights'])
-        
-        # Get preprocess metadata
-        if preprocess_profile:
-            preprocess_meta = {
-                'preprocess_id': preprocess_profile.get('preprocess_id'),
-                'name': preprocess_profile.get('name'),
-            }
-        
-        # Get postprocess metadata (use already retrieved postprocess_profile_retrieved)
-        if postprocess_profile_retrieved:
-            postprocess_meta = {
-                'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
-                'name': postprocess_profile_retrieved.get('name'),
-                'steps': postprocess_profile_retrieved.get('steps', []),  # List of operations
-            }
-
-    message = None
-    if not challenge_type_matched:
-        message = "no match challenge type found"
-        # If no match, return early without processing
-        if not single_challenge_id:
-            return jsonify({
-                'error': 'no match challenge type found',
-                'message': message,
-                'results': [],
-            })
-
-    return jsonify({
-        'results': all_results,
-        'processed_images': processed_images_base64,
-        'perform_time': t1-t0,
-        'images_processed': len(images),
-        'challenge_id': single_challenge_id,
-        'model': safe_model,
-        'preprocess': preprocess_meta,
-        'postprocess': postprocess_meta,
-        'message': message,
-    })
+        response['model'] = safe_model
+    
+    if single_challenge_id:
+        response['challenge_id'] = single_challenge_id
+    
+    if t1 - t0 > 0:
+        response['perform_time'] = t1 - t0
+    
+    if message:
+        response['message'] = message
+    
+    if error:
+        response['error'] = error
+    
+    # Add preprocessing metadata for UI display (from first image's preprocessing)
+    if preprocess_profile:
+        # Create preprocess metadata from profile
+        preprocess_meta = {
+            'preprocess_id': preprocess_profile.get('preprocess_id'),
+            'applied_steps': [],  # Batch doesn't track individual steps per image
+        }
+        response['preprocess'] = preprocess_meta
+    
+    # Add postprocessing metadata for UI display
+    if postprocess_profile_retrieved:
+        postprocess_meta = {
+            'postprocess_id': postprocess_profile_retrieved.get('postprocess_id'),
+            'name': postprocess_profile_retrieved.get('name'),
+            'steps': postprocess_profile_retrieved.get('steps', []),
+        }
+        response['postprocess'] = postprocess_meta
+    
+    return jsonify(response)
 
 # =========================
 # Model management endpoints
@@ -609,15 +712,15 @@ def create_or_update_model():
         
         # 3. Define the background worker function
         def background_upload_task(f_path, m_id, m_name, res, active):
-            print(f"--- [Background] Upload started for {m_id} ---")
+            log.info(f"[Background] Upload started for {m_id}")
             try:
                 # Open the temp file and stream it to GridFS
                 # This is the part that takes 10 minutes, but now it runs in the background
                 with open(f_path, 'rb') as f_stream:
                     upsert_model(m_id, m_name, f_stream, res, is_active=active)
-                print(f"--- [Background] Upload finished successfully for {m_id} ---")
+                log.success(f"[Background] Upload finished successfully for {m_id}")
             except Exception as e:
-                print(f"--- [Background] Upload FAILED for {m_id}: {e} ---")
+                log.error(f"[Background] Upload FAILED for {m_id}: {e}")
             finally:
                 # Cleanup: Delete the temp file to free up space
                 if os.path.exists(f_path):

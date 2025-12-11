@@ -117,7 +117,10 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
         imgsz: Image size for inference (int or tuple). If None, uses model default.
     
     Returns:
-        List of detection results, each with 'class', 'confidence', 'bbox' [x1, y1, x2, y2]
+        List of detection results, each with:
+            - 'class': predicted class label (str)
+            - 'confidence': confidence score (float, 0-1)
+            - 'bbox': [x_min, y_min, x_max, y_max] in intrinsic image coordinates (model space, pixel coordinates)
         Or dict with 'error' key if an error occurred
     """
     if not YOLO_AVAILABLE:
@@ -227,42 +230,74 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
             predict_params['imgsz'] = imgsz
         
         # Handle image input based on evaluation mode
+        # YOLO accepts: file paths (str), PIL Images, numpy arrays (HWC format, uint8)
+        # Best practice: use PIL Images for maximum compatibility
         if use_native_eval and isinstance(image, str) and os.path.exists(image):
             # Native evaluation mode: pass file path directly to YOLOv8
             # This matches YOLOv8's native evaluation behavior exactly
             image_source = image
         elif isinstance(image, bytes):
-            # Image bytes - convert through PIL (for preprocessed images)
-            img = Image.open(io.BytesIO(image))
-            # Convert grayscale to RGB if needed
-            if img.mode == 'L' or img.mode == 'LA' or img.mode == 'P':
-                img = img.convert('RGB')
-            elif img.mode == 'RGBA':
-                # Convert RGBA to RGB by creating a white background
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
-                img = background
-            img_array = np.array(img)
-        
-        # Ensure image has 3 channels (RGB) for YOLO
-        if len(img_array.shape) == 2:
-            # Grayscale image (H, W) -> convert to RGB (H, W, 3)
-            img_array = np.stack([img_array] * 3, axis=-1)
-        elif len(img_array.shape) == 3 and img_array.shape[2] == 1:
-            # Grayscale with channel dimension (H, W, 1) -> convert to RGB (H, W, 3)
-            img_array = np.repeat(img_array, 3, axis=2)
-        elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
-            # RGBA image -> convert to RGB
-            # Create white background and composite
-            rgb_array = img_array[:, :, :3]
-            alpha = img_array[:, :, 3:4] / 255.0
-            white_bg = np.ones_like(rgb_array) * 255
-            img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
-            
-            image_source = img_array
+            # Image bytes - convert to PIL Image (YOLO's preferred format)
+            try:
+                img = Image.open(io.BytesIO(image))
+                # Convert to RGB (YOLO requires RGB format)
+                if img.mode == 'L' or img.mode == 'LA' or img.mode == 'P':
+                    img = img.convert('RGB')
+                elif img.mode == 'RGBA':
+                    # Convert RGBA to RGB by creating a white background
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                    img = background
+                elif img.mode != 'RGB':
+                    # Convert any other mode to RGB
+                    img = img.convert('RGB')
+                
+                # Pass PIL Image directly to YOLO (best compatibility)
+                image_source = img
+            except Exception as e:
+                return {'error': f'Failed to decode image bytes: {str(e)}'}
+        elif isinstance(image, Image.Image):
+            # PIL Image - ensure it's RGB
+            try:
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                image_source = image
+            except Exception as e:
+                return {'error': f'Failed to convert PIL Image to RGB: {str(e)}'}
+        elif isinstance(image, np.ndarray):
+            # Numpy array - convert to PIL Image for YOLO compatibility
+            try:
+                img_array = image.copy()  # Make a copy to avoid modifying original
+                
+                # Ensure image has 3 channels (RGB) for YOLO
+                if len(img_array.shape) == 2:
+                    # Grayscale image (H, W) -> convert to RGB (H, W, 3)
+                    img_array = np.stack([img_array] * 3, axis=-1)
+                elif len(img_array.shape) == 3 and img_array.shape[2] == 1:
+                    # Grayscale with channel dimension (H, W, 1) -> convert to RGB (H, W, 3)
+                    img_array = np.repeat(img_array, 3, axis=2)
+                elif len(img_array.shape) == 3 and img_array.shape[2] == 4:
+                    # RGBA -> RGB
+                    rgb_array = img_array[:, :, :3]
+                    alpha = img_array[:, :, 3:4] / 255.0
+                    white_bg = np.ones_like(rgb_array) * 255
+                    img_array = (rgb_array * alpha + white_bg * (1 - alpha)).astype(np.uint8)
+                
+                # Ensure dtype is uint8 and values are in [0, 255] range
+                if img_array.dtype != np.uint8:
+                    if img_array.max() <= 1.0:
+                        img_array = (img_array * 255).astype(np.uint8)
+                    else:
+                        img_array = img_array.astype(np.uint8)
+                
+                # Convert numpy array to PIL Image (YOLO's preferred format)
+                # PIL expects (H, W, C) format with uint8 dtype
+                image_source = Image.fromarray(img_array, mode='RGB')
+            except Exception as e:
+                return {'error': f'Failed to convert numpy array to PIL Image: {str(e)}'}
         else:
-            # Numpy array or other format
-            image_source = image
+            # Unknown format - return error
+            return {'error': f'Unsupported image type: {type(image).__name__}. Expected bytes, numpy array, PIL Image, or file path (str).'}
         
         # Run inference with confidence and IoU thresholds
         # YOLO's predict method applies confidence filtering and NMS automatically
@@ -288,10 +323,12 @@ def solve_captcha(image, question, config, postprocess_profile=None, use_native_
                     class_id = int(boxes.cls[i].cpu().numpy())
                     class_name = result.names[class_id] if hasattr(result, 'names') else f'class_{class_id}'
                     
+                    # Bbox coordinates are in intrinsic image coordinates (model input space)
+                    # Format: [x_min, y_min, x_max, y_max] as required by API contract
                     detections.append({
                         'class': class_name,
                         'confidence': confidence,
-                        'bbox': [float(x1), float(y1), float(x2), float(y2)]
+                        'bbox': [float(x1), float(y1), float(x2), float(y2)]  # Intrinsic coordinates
                     })
         
         # Apply postprocessing steps if provided (skip for native evaluation to match YOLOv8 exactly)

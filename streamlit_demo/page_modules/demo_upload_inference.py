@@ -15,7 +15,7 @@ _parent_dir = os.path.abspath(os.path.join(_this_dir, '..'))
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-from utils import API_TIMEOUT
+from utils import API_TIMEOUT, extract_detections
 
 def render(progress, status):
     """Render the Upload Image for Inference page."""
@@ -45,179 +45,168 @@ def render(progress, status):
                 
                 st.success("Uploaded and processed by API")
 
-                # Display basic info
-                col1, col2 = st.columns([2, 1])
-
-                with col1:
-                    # Display processed image with bounding boxes
-                    processed_img_b64 = out.get("processed_image")
-                    results = out.get("results", [])
+                # Extract detections using standard schema
+                detections = extract_detections(out)
+                
+                # Display images in 1x2 layout (original and preprocessed with bounding boxes)
+                if uploaded_img:
+                    # Reset file pointer and load original image
+                    uploaded_img.seek(0)
+                    original_img = Image.open(uploaded_img)
+                    original_width, original_height = original_img.size
                     
-                    # Normalize results: ensure it's always a list
-                    if isinstance(results, dict):
-                        # If results is a dict with 'error', handle it
-                        if 'error' in results:
-                            st.error(f"Inference error: {results['error']}")
-                            results = []
-                        # If results is a dict with 'message', extract detections
-                        elif 'message' in results:
-                            results = results.get('detections', [])
-                        else:
-                            # Unknown dict format, treat as empty
-                            results = []
-                    elif not isinstance(results, list):
-                        # Not a list or dict, treat as empty
-                        results = []
-
-                    if processed_img_b64:
+                    # Get preprocessed image from API response if available
+                    processed_img = None
+                    processed_width, processed_height = original_width, original_height
+                    
+                    processed_image_b64 = out.get("processed_image")
+                    if processed_image_b64:
                         try:
-                            img_bytes = base64.b64decode(processed_img_b64)
-                            img = Image.open(io.BytesIO(img_bytes))
-
-                            # Get processed image dimensions
-                            processed_width, processed_height = img.size
-
-                            # Draw bounding boxes on image if there are detections
-                            if results and isinstance(results, list):
-                                draw = ImageDraw.Draw(img)
-                                # Try to load a font, fallback to default if not available
-                                try:
-                                    font = ImageFont.truetype("arial.ttf", 16)
-                                except:
-                                    try:
-                                        font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
-                                    except:
-                                        font = ImageFont.load_default()
-
-                                for idx, result in enumerate(results):
-                                    # Ensure result is a dictionary
-                                    if not isinstance(result, dict):
-                                        continue
-                                    bbox = result.get('bbox', [])
-                                    if len(bbox) >= 4:
-                                        x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
-                                        # Draw rectangle
-                                        draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
-                                        # Draw label
-                                        class_name = result.get('class', 'Unknown')
-                                        confidence = result.get('confidence', 0.0)
-                                        label = f"{class_name}: {confidence:.2f}"
-                                        # Get text size for background
-                                        bbox_text = draw.textbbox((0, 0), label, font=font)
-                                        text_width = bbox_text[2] - bbox_text[0]
-                                        text_height = bbox_text[3] - bbox_text[1]
-                                        # Draw text background
-                                        draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
-                                        # Draw text
-                                        draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
-
-                                caption = f"Processed Image with Detections ({processed_width} × {processed_height})"
-                            else:
-                                caption = f"Processed Image - No Detections ({processed_width} × {processed_height})"
-
-                            # Display the processed image, scaled to fit within the column
-                            st.image(img, caption=caption, width='stretch')
+                            processed_img_bytes = base64.b64decode(processed_image_b64)
+                            processed_img = Image.open(io.BytesIO(processed_img_bytes))
+                            processed_width, processed_height = processed_img.size
                         except Exception as e:
-                            st.error(f"Failed to display image: {e}")
+                            st.warning(f"Failed to decode preprocessed image: {e}")
+                            # Fallback to original image
+                            processed_img = original_img.copy()
                     else:
-                        st.warning("No processed image available")
+                        # No preprocessing was applied, use original
+                        processed_img = original_img.copy()
+                    
+                    # Draw bounding boxes on preprocessed image if there are detections
+                    if detections and len(detections) > 0:
+                        draw = ImageDraw.Draw(processed_img)
+                        # Try to load a font, fallback to default if not available
+                        try:
+                            font = ImageFont.truetype("arial.ttf", 16)
+                        except:
+                            try:
+                                font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 16)
+                            except:
+                                font = ImageFont.load_default()
 
-                with col2:
+                        for detection in detections:
+                            # Ensure detection is a dictionary with required fields
+                            if not isinstance(detection, dict):
+                                continue
+                            bbox = detection.get('bbox', [])
+                            if len(bbox) >= 4:
+                                x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                                # Draw rectangle
+                                draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+                                # Draw label
+                                class_name = detection.get('class', 'Unknown')
+                                confidence = detection.get('confidence', 0.0)
+                                label = f"{class_name}: {confidence:.2f}"
+                                # Get text size for background
+                                bbox_text = draw.textbbox((0, 0), label, font=font)
+                                text_width = bbox_text[2] - bbox_text[0]
+                                text_height = bbox_text[3] - bbox_text[1]
+                                # Draw text background
+                                draw.rectangle([x1, y1 - text_height - 4, x1 + text_width + 4, y1], fill="red")
+                                # Draw text
+                                draw.text((x1 + 2, y1 - text_height - 2), label, fill="white", font=font)
+
+                    # Display images in 1x2 layout
+                    img_col1, img_col2 = st.columns(2)
+                    
+                    with img_col1:
+                        st.image(original_img, caption=f"Original Image ({original_width} × {original_height})", width='stretch')
+                    
+                    with img_col2:
+                        if detections and len(detections) > 0:
+                            caption = f"Preprocessed Image with Detections ({processed_width} × {processed_height})"
+                        else:
+                            caption = f"Preprocessed Image - No Detections ({processed_width} × {processed_height})"
+                        st.image(processed_img, caption=caption, width='stretch')
+                else:
+                    st.warning("No image available")
+
+                # Display inference information in 1x4 layout
+                st.markdown("---")
+                info_col1, info_col2, info_col3, info_col4 = st.columns(4)
+                
+                with info_col1:
                     # Display model info
                     model = out.get("model")
                     if model:
-                        st.info(f"**Model:** {model.get('model_name', 'N/A')}")
-                        st.caption(f"Model ID: {model.get('model_id', 'N/A')}")
+                        model_id = model.get('model_id', 'N/A')
+                        model_name = model.get('model_name', 'N/A')
+                        st.info(f"**Model ID:** {model_id}")
+                        st.caption(f"Model Name: {model_name}")
                     else:
-                        st.info("**Model:** N/A")
-                        st.caption("No model information available")
-                    
-                    st.markdown("---")
-                    
-                    # Display preprocessing info (always visible)
+                        st.info("**Model ID:** N/A")
+                        st.caption("Model Name: N/A")
+                
+                with info_col2:
+                    # Display preprocessing applied
                     preprocess = out.get("preprocess")
                     if preprocess:
                         preprocess_id = preprocess.get('preprocess_id', 'N/A')
-                        st.info(f"**Preprocessing:** {preprocess_id}")
                         applied_steps = preprocess.get('applied_steps', [])
-                        if applied_steps:
+                        st.info(f"**Preprocessing Applied:** {preprocess_id}")
+                        if applied_steps and isinstance(applied_steps, list) and len(applied_steps) > 0:
                             step_names = [step.get('operation', '') for step in applied_steps if isinstance(step, dict)]
                             if step_names:
                                 st.caption(f"Steps: {', '.join(step_names)}")
                             else:
-                                st.caption("No preprocessing step is applied")
+                                st.caption("No preprocessing steps")
                         else:
-                            st.caption("No preprocessing step is applied")
+                            st.caption("No preprocessing steps")
                     else:
-                        st.info("**Preprocessing:** N/A")
-                        st.caption("No preprocessing step is applied")
-                    
-                    st.markdown("---")
-
-                    # Display postprocessing info (always visible)
+                        st.info("**Preprocessing Applied:** N/A")
+                        st.caption("No preprocessing applied")
+                
+                with info_col3:
+                    # Display postprocessing applied
                     postprocess = out.get("postprocess")
                     if postprocess:
                         postprocess_name = postprocess.get('name', 'N/A')
                         postprocess_id = postprocess.get('postprocess_id', 'N/A')
-                        st.info(f"**Postprocessing:** {postprocess_name}")
-                        if postprocess_id and postprocess_id != 'N/A':
-                            st.caption(f"Postprocess ID: {postprocess_id}")
+                        st.info(f"**Postprocessing Applied:** {postprocess_id}")
+                        if postprocess_name and postprocess_name != 'N/A':
+                            st.caption(f"Name: {postprocess_name}")
                         
                         steps = postprocess.get('steps', [])
-                        # Extract thresholds from nms operation if present
-                        conf_thresh = 'N/A'
-                        iou_thresh = 'N/A'
                         if isinstance(steps, list) and len(steps) > 0:
                             operations = [step.get('operation', 'Unknown') for step in steps if isinstance(step, dict)]
                             if operations:
                                 st.caption(f"Operations: {', '.join(operations)}")
                             else:
-                                st.caption("No postprocessing step is applied")
-                            
-                            # Extract thresholds from nms operation if present
-                            for step in steps:
-                                if isinstance(step, dict) and step.get('operation') == 'nms':
-                                    params = step.get('params', {})
-                                    conf_thresh = params.get('confidence_threshold', 'N/A')
-                                    iou_thresh = params.get('iou_threshold', 'N/A')
-                                    break
-                            
-                            if conf_thresh != 'N/A' or iou_thresh != 'N/A':
-                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
-                        elif isinstance(steps, dict):
-                            # Legacy format support
-                            conf_thresh = steps.get('confidence_threshold', 'N/A')
-                            iou_thresh = steps.get('iou_threshold', 'N/A')
-                            if conf_thresh != 'N/A' or iou_thresh != 'N/A':
-                                st.caption(f"Conf: {conf_thresh}, IoU: {iou_thresh}")
+                                st.caption("No operations")
                         else:
-                            st.caption("No postprocessing step is applied")
+                            st.caption("No operations")
                     else:
-                        st.info("**Postprocessing:** N/A")
-                        st.caption("No postprocessing step is applied")
-                    
-                    st.markdown("---")
-
+                        st.info("**Postprocessing Applied:** N/A")
+                        st.caption("No postprocessing applied")
+                
+                with info_col4:
                     # Display performance
-                    st.metric("Processing Time", f"{out.get('perform_time', 0):.3f}s")
+                    perform_time = out.get('perform_time')
+                    if perform_time:
+                        st.metric("Processing Time", f"{perform_time:.3f}s")
+                    else:
+                        st.metric("Processing Time", "N/A")
 
-                # Display results table
-                if results and isinstance(results, list) and len(results) > 0:
+                # Display results table using standard schema
+                if detections and len(detections) > 0:
                     st.markdown("### Detection Results")
                     # Prepare data for table
                     table_data = []
-                    for idx, result in enumerate(results):
-                        # Ensure result is a dictionary
-                        if not isinstance(result, dict):
+                    for idx, detection in enumerate(detections):
+                        # Ensure detection is a dictionary with required fields (bbox, class, confidence)
+                        if not isinstance(detection, dict):
                             continue
-                        bbox = result.get('bbox', [])
-                        bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]" if len(bbox) >= 4 else "N/A"
+                        bbox = detection.get('bbox', [])
+                        if len(bbox) < 4:
+                            continue  # Skip invalid detections
+                        bbox_str = f"[{', '.join([str(int(x)) for x in bbox[:4]])}]"
                         table_data.append({
                             "ID": idx + 1,
-                            "Class": result.get('class', 'Unknown'),
-                            "Confidence": f"{result.get('confidence', 0.0):.4f}",
+                            "Class": detection.get('class', 'Unknown'),
+                            "Confidence": f"{detection.get('confidence', 0.0):.4f}",
                             "Bounding Box": bbox_str,
-                            "Coordinates": f"({bbox[0]}, {bbox[1]}) to ({bbox[2]}, {bbox[3]})" if len(bbox) >= 4 else "N/A"
+                            "Coordinates": f"({bbox[0]:.1f}, {bbox[1]:.1f}) to ({bbox[2]:.1f}, {bbox[3]:.1f})"
                         })
                     if table_data:
                         st.dataframe(table_data, width='stretch')
