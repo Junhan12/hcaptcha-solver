@@ -30,9 +30,17 @@ def _bytes_to_cv2_image(img_bytes):
 
 
 def _cv2_image_to_bytes(img_cv2, format='JPG'):
-    """Convert OpenCV image (numpy array) back to bytes."""
+    """
+    Convert OpenCV image (numpy array) back to bytes.
+    
+    IMPORTANT: OpenCV uses BGR format, but JPEG/PNG standard is RGB.
+    cv2.imencode() automatically handles BGR->RGB conversion during encoding,
+    so the output bytes are in RGB format (correct for YOLO).
+    """
     if not CV2_AVAILABLE:
         raise ImportError("OpenCV (cv2) is required for preprocessing")
+    # OpenCV's imencode expects BGR format and automatically converts to RGB during encoding
+    # This ensures the output bytes are RGB-compatible (JPEG/PNG standard)
     success, encoded_img = cv2.imencode(f'.{format.lower()}', img_cv2)
     if not success:
         raise ValueError("Failed to encode image")
