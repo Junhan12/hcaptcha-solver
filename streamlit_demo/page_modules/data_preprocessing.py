@@ -101,6 +101,16 @@ def process_folder_images(
     if not PREPROCESS_AVAILABLE or not preprocess_profile:
         raise ImportError("Preprocessing functionality not available")
     
+    # Validate input_folder before processing
+    if not input_folder:
+        raise ValueError("Input folder path is empty. Please select a valid input folder.")
+    
+    if not os.path.exists(input_folder):
+        raise ValueError(f"Input folder does not exist: {input_folder}")
+    
+    if not os.path.isdir(input_folder):
+        raise ValueError(f"Input path is not a directory: {input_folder}")
+    
     os.makedirs(output_folder, exist_ok=True)
     
     # Get image files
@@ -110,10 +120,11 @@ def process_folder_images(
         image_files.extend(glob.glob(os.path.join(input_folder, ext)))
         image_files.extend(glob.glob(os.path.join(input_folder, ext.upper())))
     
-    image_files = sorted(image_files)
+    # Remove duplicates (case-insensitive filesystems)
+    image_files = sorted(list(set(image_files)))
     
     if not image_files:
-        raise ValueError(f"No images found in {input_folder}")
+        raise ValueError(f"No images found in {input_folder}. Please ensure the folder contains image files (.jpg, .jpeg, .png, .bmp).")
     
     total_images = len(image_files)
     processed_count = 0
@@ -432,36 +443,6 @@ def render():
                                 st.warning(f"Path not found")
                     
                     with col2:
-                        st.markdown("**Output Directory**")
-                        output_folder = st.session_state.get('preprocess_output_folder', '')
-                        
-                        if output_folder and os.path.exists(output_folder):
-                            st.success(f"Selected: {output_folder}")
-                        else:
-                            st.info("No folder selected. Click 'Browse files' to select output directory.")
-                        
-                        if TKINTER_AVAILABLE:
-                            if st.button("Browse files", key="browse_output_btn", type="primary"):
-                                st.session_state['browse_output_folder'] = True
-                                st.rerun()
-                        else:
-                            manual_output_folder = st.text_input(
-                                "Enter output directory path manually:",
-                                value=output_folder,
-                                help="Path to directory where preprocessed_images folder will be created",
-                                key="output_folder_input_manual"
-                            )
-                            if manual_output_folder != output_folder:
-                                st.session_state['preprocess_output_folder'] = manual_output_folder
-                                output_folder = manual_output_folder
-                        
-                        if output_folder:
-                            if os.path.exists(output_folder):
-                                st.caption(f"Valid folder: {os.path.basename(output_folder)}")
-                            else:
-                                st.warning(f"Path not found")
-                    
-                    with col3:
                         st.markdown("**Labels Folder (Optional)**")
                         labels_folder = st.session_state.get('preprocess_labels_folder', '')
                                                 
@@ -490,6 +471,36 @@ def render():
                                 st.caption(f"Valid folder: {os.path.basename(labels_folder)}")
                             else:
                                 st.warning(f"Path not found")
+                    
+                    with col3:
+                        st.markdown("**Output Directory**")
+                        output_folder = st.session_state.get('preprocess_output_folder', '')
+                        
+                        if output_folder and os.path.exists(output_folder):
+                            st.success(f"Selected: {output_folder}")
+                        else:
+                            st.info("No folder selected. Click 'Browse files' to select output directory.")
+                        
+                        if TKINTER_AVAILABLE:
+                            if st.button("Browse files", key="browse_output_btn", type="primary"):
+                                st.session_state['browse_output_folder'] = True
+                                st.rerun()
+                        else:
+                            manual_output_folder = st.text_input(
+                                "Enter output directory path manually:",
+                                value=output_folder,
+                                help="Path to directory where preprocessed_images folder will be created",
+                                key="output_folder_input_manual"
+                            )
+                            if manual_output_folder != output_folder:
+                                st.session_state['preprocess_output_folder'] = manual_output_folder
+                                output_folder = manual_output_folder
+                        
+                        if output_folder:
+                            if os.path.exists(output_folder):
+                                st.caption(f"Valid folder: {os.path.basename(output_folder)}")
+                            else:
+                                st.warning(f"Path not found")
                 
                 # Batch process button
                 if preprocess_profile and st.button("Process Folder", key="process_folder_button", type="primary"):
@@ -498,16 +509,30 @@ def render():
                     output_folder = st.session_state.get('preprocess_output_folder', '')
                     labels_folder = st.session_state.get('preprocess_labels_folder', '')
                     
+                    # Validate inputs - check for empty strings and strip whitespace
+                    input_folder = input_folder.strip() if input_folder else ''
+                    output_folder = output_folder.strip() if output_folder else ''
+                    labels_folder = labels_folder.strip() if labels_folder else ''
+                    
                     # Validate inputs
+                    validation_error = None
                     if not input_folder:
-                        st.error("Please select an input images folder.")
+                        validation_error = "Please select an input images folder."
                     elif not os.path.exists(input_folder):
-                        st.error(f"Input folder not found: {input_folder}")
+                        validation_error = f"Input folder not found: {input_folder}"
+                    elif not os.path.isdir(input_folder):
+                        validation_error = f"Input path is not a directory: {input_folder}"
                     elif not output_folder:
-                        st.error("Please select an output directory.")
+                        validation_error = "Please select an output directory."
                     elif not os.path.exists(output_folder):
-                        st.error(f"Output directory not found: {output_folder}")
-                else:
+                        validation_error = f"Output directory not found: {output_folder}"
+                    elif not os.path.isdir(output_folder):
+                        validation_error = f"Output path is not a directory: {output_folder}"
+                    
+                    if validation_error:
+                        st.error(validation_error)
+                    else:
+                        # All validations passed - proceed with processing
                         # Set up output path
                         save_images_dir = os.path.join(output_folder, "preprocessed_images")
                         
