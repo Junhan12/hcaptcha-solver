@@ -142,6 +142,18 @@ def augment_images(
             sequential_transforms.append(seq_transform)
             transform_names.append('horizontal_flip')
         
+        if selected_augmentations.get('vertical_flip', False):
+            p = selected_augmentations.get('vertical_flip_p', 0.5)
+            if has_labels_dir:
+                seq_transform = A.Compose(
+                    [A.VerticalFlip(p=1.0)],
+                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                )
+            else:
+                seq_transform = A.Compose([A.VerticalFlip(p=1.0)])
+            sequential_transforms.append(seq_transform)
+            transform_names.append('vertical_flip')
+        
         if selected_augmentations.get('random_rotate90', False):
             p = selected_augmentations.get('random_rotate90_p', 1.0)
             if has_labels_dir:
@@ -212,6 +224,10 @@ def augment_images(
         if selected_augmentations.get('horizontal_flip', False):
             p = selected_augmentations.get('horizontal_flip_p', 0.5)
             transforms.append(A.HorizontalFlip(p=p))
+        
+        if selected_augmentations.get('vertical_flip', False):
+            p = selected_augmentations.get('vertical_flip_p', 0.5)
+            transforms.append(A.VerticalFlip(p=p))
         
         if selected_augmentations.get('random_rotate90', False):
             p = selected_augmentations.get('random_rotate90_p', 1.0)
@@ -610,6 +626,21 @@ def render():
                 )
         
         with col2:
+            selected_augmentations['vertical_flip'] = st.checkbox(
+                "Vertical Flip",
+                value=False,
+                help="Flip image vertically"
+            )
+            if selected_augmentations['vertical_flip']:
+                selected_augmentations['vertical_flip_p'] = st.slider(
+                    "Vertical Flip Probability",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.5,
+                    step=0.1,
+                    key="vertical_flip_p"
+                )
+
             selected_augmentations['rotate'] = st.checkbox(
                 "Rotate",
                 value=False,
@@ -633,7 +664,9 @@ def render():
                     step=0.1,
                     key="rotate_p"
                 )
-    
+
+            
+
     with st.expander("Color & Brightness Augmentations", expanded=True):
         col1, col2 = st.columns(2)
         
@@ -735,6 +768,7 @@ def render():
         # Check if any augmentation is selected
         has_selection = any([
             selected_augmentations.get('horizontal_flip', False),
+            selected_augmentations.get('vertical_flip', False),
             selected_augmentations.get('random_rotate90', False),
             selected_augmentations.get('rotate', False),
             selected_augmentations.get('brightness', False),

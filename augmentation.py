@@ -10,7 +10,8 @@ import shutil
 transform = A.Compose(
     [
         A.HorizontalFlip(p=0.5),
-        A.RandomRotate90(p=1.0),  # 90° clockwise/counterclockwise
+        A.VerticalFlip(p=0.5),
+        #A.RandomRotate90(p=1.0),  # 90° clockwise/counterclockwise
         A.Rotate(limit=15, p=0.7),  # random -15° to +15°
         A.RandomBrightnessContrast(
             brightness_limit=0.2,  # ~-20% to +20% brightness
@@ -96,9 +97,9 @@ def augment_and_save(images_dir, labels_dir, save_images_dir, save_labels_dir, n
 if __name__ == "__main__":
     # CHANGE these paths to your dataset locations
     augment_and_save(
-        images_dir="C:/Users/junha/Downloads/unpaired shape.v17-390-shape.yolov8/train/images/",
-        labels_dir="C:/Users/junha/Downloads/unpaired shape.v17-390-shape.yolov8/train/labels/",
-        save_images_dir="C:/Users/junha/Downloads/unpaired shape.v17-390-shape.yolov8/train/aug_images/",
-        save_labels_dir="C:/Users/junha/Downloads/unpaired shape.v17-390-shape.yolov8/train/aug_labels/",
+        images_dir="C:/Users/junha/OneDrive/Desktop/FYP/final-shape-dataset/preprocessed_all_images",
+        labels_dir="C:/Users/junha/OneDrive/Desktop/FYP/final-shape-dataset/ori_all_labels",
+        save_images_dir="C:/Users/junha/OneDrive/Desktop/FYP/final-shape-dataset/aug_images/",
+        save_labels_dir="C:/Users/junha/OneDrive/Desktop/FYP/final-shape-dataset/aug_labels/",
         n_aug=3,                  # augmentations per image
     )
