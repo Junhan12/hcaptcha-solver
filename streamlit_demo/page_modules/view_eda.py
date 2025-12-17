@@ -199,6 +199,8 @@ def plot_class_distribution(label_folder, class_names):
     status_text = st.empty()
     status_text.text(f"Scanning {len(label_files)} label files...")
 
+    invalid_class_ids = set()
+    
     for idx, file in enumerate(label_files):
         try:
             with open(file, 'r') as f:
@@ -207,8 +209,12 @@ def plot_class_distribution(label_folder, class_names):
                     parts = line.strip().split()
                     if len(parts) > 0:
                         class_id = int(parts[0])
-                        class_counts[class_id] += 1
-        except Exception:
+                        # Validate class_id is within expected range
+                        if 0 <= class_id < len(class_names):
+                            class_counts[class_id] += 1
+                        else:
+                            invalid_class_ids.add(class_id)
+        except Exception as e:
             continue
 
         if (idx + 1) % 50 == 0:
@@ -216,9 +222,29 @@ def plot_class_distribution(label_folder, class_names):
 
     progress_bar.progress(1.0)
     status_text.empty()
+    
+    # Warn about invalid class IDs if found
+    if invalid_class_ids:
+        st.warning(f"Found invalid class IDs in labels: {sorted(invalid_class_ids)}. "
+                  f"Expected class IDs: 0 to {len(class_names) - 1}")
 
     # Prepare data for plotting
     counts = [class_counts.get(i, 0) for i in range(len(class_names))]
+    
+    # Check if we have any data
+    if not class_counts:
+        st.warning("No class instances found in label files. All classes have 0 counts.")
+        # Still create a figure to show the structure
+        fig = plt.figure(figsize=(9, 5))
+        bars = plt.bar(class_names, counts, color='skyblue', edgecolor='black')
+        plt.title('Class Distribution (Balance Check) - No Data Found')
+        plt.xlabel('Classes')
+        plt.ylabel('Number of Instances')
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        plt.xticks(rotation=45, ha='right')
+        # Set y-axis to show at least some range
+        plt.ylim(bottom=0, top=max(1, max(counts) + 1) if counts else 1)
+        return fig
     
     # Plotting
     fig = plt.figure(figsize=(9, 5))
@@ -227,14 +253,28 @@ def plot_class_distribution(label_folder, class_names):
     # Add numbers on top of bars
     for bar in bars:
         yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval + 1, int(yval), 
-                ha='center', va='bottom')
+        if yval > 0:  # Only add text if bar has height
+            plt.text(bar.get_x() + bar.get_width()/2, yval + max(counts) * 0.01, int(yval), 
+                    ha='center', va='bottom', fontsize=9)
+        else:
+            # Show 0 for empty bars
+            plt.text(bar.get_x() + bar.get_width()/2, max(counts) * 0.01 if max(counts) > 0 else 0.1, '0', 
+                    ha='center', va='bottom', fontsize=9, color='gray')
 
     plt.title('Class Distribution (Balance Check)')
     plt.xlabel('Classes')
     plt.ylabel('Number of Instances')
     plt.grid(axis='y', linestyle='--', alpha=0.7)
     plt.xticks(rotation=45, ha='right')
+    
+    # Ensure y-axis has proper range (at least 1% above max, or minimum 1 if all zeros)
+    max_count = max(counts) if counts else 0
+    if max_count == 0:
+        plt.ylim(bottom=0, top=1)
+    else:
+        plt.ylim(bottom=0, top=max_count * 1.1)  # 10% padding at top
+
+    plt.tight_layout()  # Ensure layout is tight to prevent clipping
 
     return fig
 
@@ -731,43 +771,43 @@ def render():
                     if analysis_name == "Color Distribution":
                         fig = analyze_color_distribution(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
                     elif analysis_name == "Brightness & Contrast":
                         fig = analyze_brightness_contrast(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
                     elif analysis_name == "Blur Detection":
                         fig = analyze_blur(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
                     elif analysis_name == "Image Sizes":
                         fig = plot_image_sizes(dataset_folder_final, file_extension)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
                     elif analysis_name == "Class Distribution":
                         fig = plot_class_distribution(label_folder_final, class_names)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
                     elif analysis_name == "Aspect Ratio":
                         fig = plot_aspect_ratio_separate(label_folder_final, class_names)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
                     elif analysis_name == "Objects per Image":
                         fig = plot_objects_per_image(label_folder_final)
                         if fig:
-                            st.pyplot(fig, width='stretch')
+                            st.pyplot(fig)
                             plt.close(fig)
 
             except Exception as e:
