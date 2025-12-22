@@ -427,7 +427,7 @@ def run_crawl_and_save_locally(output_dir, max_rounds=20):
                 break
         
         if round_number >= max_rounds:
-            warning_msg = f"Reached maximum rounds limit ({max_rounds})"
+            warning_msg = f"Reached maximum rounds limit ({max_rounds}. Stopped data crawling.)"
             summary["errors"].append(warning_msg)
             print(f"Warning: {warning_msg}")
         
@@ -570,12 +570,6 @@ def render():
                     for q_info in summary["questions"]:
                         with st.expander(f"Round {q_info['round']}: {q_info['question']}"):
                             st.caption(f"Challenge Type: {q_info['challenge_type_id']}")
-                
-                # Display errors if any
-                if summary["errors"]:
-                    st.warning(f"{len(summary['errors'])} error(s) occurred:")
-                    for error in summary["errors"]:
-                        st.error(error)
                 
                 # Show output location
                 st.info(f"**Output Location:** `{output_folder}`")
