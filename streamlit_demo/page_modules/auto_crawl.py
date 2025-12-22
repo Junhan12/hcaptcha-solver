@@ -454,7 +454,18 @@ def render():
         }
         </style>
     """, unsafe_allow_html=True)
-    
+     # Information section
+    st.markdown("### Process")
+    st.markdown("""
+    1. **Validation**: The crawler validates keywords and finds the challenge type from the question
+    2. **Image Extraction**: Extracts images from canvas elements or div tiles
+    3. **Local Storage**: Saves images to local directory organized by challenge_type (e.g., ct-001/)
+    4. **Auto-increment**: Automatically increments filenames (image1.jpg, image2.jpg, etc.) based on existing files
+    5. **No Inference**: Images are saved locally without inference or MongoDB storage
+    """)
+
+    st.markdown("---")
+
     st.header("Auto Crawl Dataset")
     st.info("Automatically crawl hCAPTCHA challenges and save images to local directory organized by challenge type.")
     
@@ -581,12 +592,4 @@ def render():
     
     st.markdown("---")
     
-    # Information section
-    st.markdown("### How It Works")
-    st.markdown("""
-    1. **Validation**: The crawler validates keywords and finds the challenge type from the question
-    2. **Image Extraction**: Extracts images from canvas elements or div tiles
-    3. **Local Storage**: Saves images to local directory organized by challenge_type (e.g., ct-001/)
-    4. **Auto-increment**: Automatically increments filenames (image1.jpg, image2.jpg, etc.) based on existing files
-    5. **No Inference**: Images are saved locally without inference or MongoDB storage
-    """)
+   

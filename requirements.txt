@@ -1,0 +1,35 @@
+# Core Web Framework
+flask>=2.3.0
+python-dotenv>=1.0.0
+
+# Database
+pymongo>=4.6.0
+gridfs>=0.1.0
+
+# Machine Learning
+ultralytics>=8.0.0
+numpy>=1.24.0
+
+# Image Processing
+pillow>=10.0.0
+opencv-python>=4.8.0
+
+# Browser Automation
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
+# Web UI
+streamlit>=1.28.0
+
+# Data Processing
+pandas>=2.0.0
+pyyaml>=6.0.0
+
+# Visualization (Optional)
+plotly>=5.17.0
+
+# HTTP Client
+requests>=2.31.0
+
+
+
