@@ -19,6 +19,22 @@ from utils import API_TIMEOUT, extract_detections
 
 def render(progress, status):
     """Render the Upload Image for Inference page."""
+    
+    # Page description and overview
+    st.header("📤 Upload Image for Inference")
+    
+    st.info("""
+    **Purpose**: Test the hCAPTCHA solver by uploading individual images and running inference through the API.
+    
+    **Process**: 
+    1. Upload an hCAPTCHA challenge image (JPG, JPEG, PNG)
+    2. Enter the challenge question text
+    3. Click "Send For Inference" to process via API
+    4. View results: original image, preprocessed image with bounding boxes, detection table, and metadata (model, preprocessing, postprocessing, timing)
+    """)
+    
+    st.markdown("---")
+    
     # Use existing "Upload -> API" functionality
     uploaded_img = st.file_uploader("Upload hCAPTCHA Image", type=["jpg", "jpeg", "png"])
     question = st.text_input("Enter hCAPTCHA Question")

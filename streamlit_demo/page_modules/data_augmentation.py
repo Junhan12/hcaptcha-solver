@@ -181,23 +181,48 @@ def augment_images(
         if selected_augmentations.get('brightness', False):
             brightness_limit = selected_augmentations.get('brightness_limit', 0.2)
             contrast_limit = selected_augmentations.get('contrast_limit', 0.0)
-            if has_labels_dir:
-                seq_transform = A.Compose(
-                    [A.RandomBrightnessContrast(
+            
+            # In sequential mode, split brightness and contrast into separate transforms
+            # so each gets its own augmented image
+            if brightness_limit > 0:
+                # Brightness-only transform
+                if has_labels_dir:
+                    seq_transform = A.Compose(
+                        [A.RandomBrightnessContrast(
+                            brightness_limit=brightness_limit,
+                            contrast_limit=0.0,  # No contrast adjustment
+                            p=1.0
+                        )],
+                        bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                    )
+                else:
+                    seq_transform = A.Compose([A.RandomBrightnessContrast(
                         brightness_limit=brightness_limit,
+                        contrast_limit=0.0,  # No contrast adjustment
+                        p=1.0
+                    )])
+                sequential_transforms.append(seq_transform)
+                transform_names.append('brightness')
+            
+            if contrast_limit > 0:
+                # Contrast-only transform
+                if has_labels_dir:
+                    seq_transform = A.Compose(
+                        [A.RandomBrightnessContrast(
+                            brightness_limit=0.0,  # No brightness adjustment
+                            contrast_limit=contrast_limit,
+                            p=1.0
+                        )],
+                        bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
+                    )
+                else:
+                    seq_transform = A.Compose([A.RandomBrightnessContrast(
+                        brightness_limit=0.0,  # No brightness adjustment
                         contrast_limit=contrast_limit,
                         p=1.0
-                    )],
-                    bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels'], clip=True)
-                )
-            else:
-                seq_transform = A.Compose([A.RandomBrightnessContrast(
-                    brightness_limit=brightness_limit,
-                    contrast_limit=contrast_limit,
-                    p=1.0
-                )])
-            sequential_transforms.append(seq_transform)
-            transform_names.append('brightness')
+                    )])
+                sequential_transforms.append(seq_transform)
+                transform_names.append('contrast')
         
         if selected_augmentations.get('exposure', False):
             gamma_limit = selected_augmentations.get('gamma_limit', (90, 110))
@@ -242,6 +267,9 @@ def augment_images(
             brightness_limit = selected_augmentations.get('brightness_limit', 0.2)
             contrast_limit = selected_augmentations.get('contrast_limit', 0.0)
             p = selected_augmentations.get('brightness_p', 0.7)
+            # In random mode, RandomBrightnessContrast applies both brightness and contrast
+            # simultaneously when both limits are > 0. This creates a single transform that
+            # applies both adjustments together in one augmentation step.
             transforms.append(A.RandomBrightnessContrast(
                 brightness_limit=brightness_limit,
                 contrast_limit=contrast_limit,
@@ -562,7 +590,7 @@ def render():
         with col4:
             st.markdown("**Augmentations per Image**")
             n_aug = st.number_input(
-                "Number of augmentations per image:",
+                "Number of augmentations per image (include original image):",
                 min_value=1,
                 max_value=10,
                 value=3,

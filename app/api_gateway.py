@@ -48,8 +48,7 @@ app = Flask(__name__)
 def solve_hcaptcha():
     """
     Headless API endpoint for processing single image challenges.
-    
-    Contract (per hcaptcha-rules.mdc):
+
     - Request: image bytes (multipart/form-data 'image') + question string (form 'question')
     - Response: {
         'results': list of detection dicts (each with 'bbox', 'class', 'confidence'),

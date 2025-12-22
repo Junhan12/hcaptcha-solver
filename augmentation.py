@@ -3,19 +3,19 @@
 import os
 import cv2
 import glob
-import albumentations as A
 import shutil
+
+import albumentations as A
 
 # Define augmentation pipeline
 transform = A.Compose(
     [
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
-        #A.RandomRotate90(p=1.0),  # 90° clockwise/counterclockwise
         A.Rotate(limit=15, p=0.7),  # random -15° to +15°
         A.RandomBrightnessContrast(
             brightness_limit=0.2,  # ~-20% to +20% brightness
-            contrast_limit=0.0,
+            contrast_limit=0.2,    # ~-20% to +20% contrast
             p=0.7,
         ),
         A.RandomGamma(

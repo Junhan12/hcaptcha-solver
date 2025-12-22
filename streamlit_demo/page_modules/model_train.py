@@ -102,7 +102,7 @@ def render():
         try:
             with open(data_yaml_path, 'r') as f:
                 yaml_content = yaml.safe_load(f)
-            st.success(f"✅ Successfully loaded: {uploaded_yaml.name}")
+            st.success(f"Successfully loaded: {uploaded_yaml.name}")
             with st.expander("View data.yaml content"):
                 st.code(yaml.dump(yaml_content, default_flow_style=False), language='yaml')
         except Exception as e:
@@ -124,7 +124,7 @@ def render():
     output_dir = st.session_state.get('model_output_dir', '')
     
     if output_dir and os.path.exists(output_dir):
-        st.success(f"📁 Selected: {output_dir}")
+        st.success(f"Selected: {output_dir}")
     else:
         st.info("No output directory selected. Click 'Browse files' to select a directory.")
     
