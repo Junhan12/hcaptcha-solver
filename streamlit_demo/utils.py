@@ -69,6 +69,8 @@ try:
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
+    go = None
+    px = None
 
 
 # Helper functions to list preprocessing and postprocessing profiles

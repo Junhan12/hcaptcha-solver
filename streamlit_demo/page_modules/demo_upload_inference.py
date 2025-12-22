@@ -21,10 +21,17 @@ def render(progress, status):
     """Render the Upload Image for Inference page."""
     
     # Page description and overview
+<<<<<<< Updated upstream
     st.header("📤 Upload Image for Inference")
     
     st.info("""
     **Purpose**: Test the hCAPTCHA solver by uploading individual images and running inference through the API.
+=======
+    st.header("Upload Image for Inference")
+    
+    st.markdown("""
+    Test the hCAPTCHA solver by uploading individual images and running inference through the API.
+>>>>>>> Stashed changes
     
     **Process**: 
     1. Upload an hCAPTCHA challenge image (JPG, JPEG, PNG)
