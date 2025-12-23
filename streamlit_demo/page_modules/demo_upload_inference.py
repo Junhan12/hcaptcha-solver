@@ -21,18 +21,11 @@ def render(progress, status):
     """Render the Upload Image for Inference page."""
     
     # Page description and overview
-<<<<<<< Updated upstream
-    st.header("📤 Upload Image for Inference")
-    
-    st.info("""
-    **Purpose**: Test the hCAPTCHA solver by uploading individual images and running inference through the API.
-=======
     st.header("Upload Image for Inference")
     
     st.markdown("""
-    Test the hCAPTCHA solver by uploading individual images and running inference through the API.
->>>>>>> Stashed changes
-    
+    **Purpose**: Test the hCAPTCHA solver by uploading individual images and running inference through the API.
+            
     **Process**: 
     1. Upload an hCAPTCHA challenge image (JPG, JPEG, PNG)
     2. Enter the challenge question text
@@ -42,7 +35,6 @@ def render(progress, status):
     
     st.markdown("---")
     
-    # Use existing "Upload -> API" functionality
     uploaded_img = st.file_uploader("Upload hCAPTCHA Image", type=["jpg", "jpeg", "png"])
     question = st.text_input("Enter hCAPTCHA Question")
     if st.button("Send For Inference"):
