@@ -18,6 +18,19 @@ FLASK_HOST = os.getenv("FLASK_HOST", "0.0.0.0")
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", 300))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", 3))
 
+# Database Configuration
+DB_CONNECTION_TIMEOUT = int(os.getenv("DB_CONNECTION_TIMEOUT", 10000))
+DB_MAX_POOL_SIZE = int(os.getenv("DB_MAX_POOL_SIZE", 500))
+DB_MIN_POOL_SIZE = int(os.getenv("DB_MIN_POOL_SIZE", 0))
+
+# Logging Configuration
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+LOG_FILE = os.getenv("LOG_FILE", "app.log")
+
+# Security
+SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+API_KEY_REQUIRED = os.getenv("API_KEY_REQUIRED", "False") == "True"
+
 # Model Configuration
 DEFAULT_MODEL_CONFIG = {
     "model_name": "default",
@@ -31,16 +44,3 @@ DEFAULT_MODEL_CONFIG = {
 
 # Preprocessing Configuration
 PREPROCESS_TIMEOUT = int(os.getenv("PREPROCESS_TIMEOUT", 30))
-
-# Database Configuration
-DB_CONNECTION_TIMEOUT = int(os.getenv("DB_CONNECTION_TIMEOUT", 10000))
-DB_MAX_POOL_SIZE = int(os.getenv("DB_MAX_POOL_SIZE", 50))
-DB_MIN_POOL_SIZE = int(os.getenv("DB_MIN_POOL_SIZE", 10))
-
-# Logging Configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-LOG_FILE = os.getenv("LOG_FILE", "app.log")
-
-# Security
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
-API_KEY_REQUIRED = os.getenv("API_KEY_REQUIRED", "False") == "True"
